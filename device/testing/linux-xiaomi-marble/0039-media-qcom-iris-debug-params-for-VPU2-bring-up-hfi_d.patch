@@ -1,0 +1,155 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Tue, 6 Oct 2026 10:14:35 +0800
+Subject: [PATCH] media: qcom: iris: debug params for VPU2 bring-up (hfi_dump,
+ enc_dpb, no_hwmode, no_ifpc)
+
+hfi_dump hex-dumps every HFI command/message; enc_dpb (default off)
+allocates encoder DPB, which VPU2 firmware requires to start the raw port
+but which currently hard-resets the SoC on the first frame; no_hwmode and
+no_ifpc keep the vcodec GDSC under SW control / disable IFPC for debugging.
+
+---
+ .../platform/qcom/iris/iris_hfi_gen2_packet.c |  7 ++++++-
+ .../media/platform/qcom/iris/iris_hfi_queue.c | 21 +++++++++++++++++++
+ .../platform/qcom/iris/iris_vpu_buffer.c      |  8 ++++++-
+ .../platform/qcom/iris/iris_vpu_common.c      |  8 +++++++
+ 4 files changed, 42 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_packet.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2_packet.c
+index 0d05dd2afc..95754e3d94 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_packet.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_packet.c
+@@ -3,6 +3,7 @@
+  * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+  */
+ 
++#include <linux/moduleparam.h>
+ #include <linux/printk.h>
+ #include <linux/soc/qcom/ubwc.h>
+ 
+@@ -265,10 +266,14 @@ void iris_hfi_gen2_packet_session_property(struct iris_inst *inst,
+ 				    payload_size);
+ }
+ 
++static bool no_ifpc;
++module_param(no_ifpc, bool, 0644);
++MODULE_PARM_DESC(no_ifpc, "debug: disable firmware inter-frame power collapse");
++
+ void iris_hfi_gen2_packet_sys_interframe_powercollapse(struct iris_core *core,
+ 						       struct iris_hfi_header *hdr)
+ {
+-	u32 payload = 1; /* HFI_TRUE */
++	u32 payload = no_ifpc ? 0 : 1; /* HFI_TRUE */
+ 
+ 	iris_hfi_gen2_create_header(hdr, 0 /*session_id*/, core->header_id++);
+ 
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_queue.c b/drivers/media/platform/qcom/iris/iris_hfi_queue.c
+index bf6db23b53..d9e1d9115b 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_queue.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_queue.c
+@@ -3,12 +3,29 @@
+  * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+  */
+ 
++#include <linux/moduleparam.h>
+ #include <linux/pm_runtime.h>
+ 
+ #include "iris_core.h"
+ #include "iris_hfi_queue.h"
+ #include "iris_vpu_common.h"
+ 
++static bool hfi_dump;
++module_param(hfi_dump, bool, 0644);
++MODULE_PARM_DESC(hfi_dump, "hex-dump HFI command and message packets");
++
++static void iris_hfi_dump(struct iris_core *core, const char *dir, void *pkt, u32 size)
++{
++	char prefix[32];
++
++	if (!hfi_dump)
++		return;
++
++	snprintf(prefix, sizeof(prefix), "iris %s: ", dir);
++	print_hex_dump(KERN_INFO, prefix, DUMP_PREFIX_OFFSET, 16, 4, pkt,
++		       min_t(u32, size, 512), false);
++}
++
+ static int iris_hfi_queue_write(struct iris_iface_q_info *qinfo, void *packet, u32 packet_size)
+ {
+ 	struct iris_hfi_queue_header *queue = qinfo->qhdr;
+@@ -116,6 +133,8 @@ int iris_hfi_queue_cmd_write_locked(struct iris_core *core, void *pkt, u32 pkt_s
+ 	if (core->state == IRIS_CORE_ERROR || core->state == IRIS_CORE_DEINIT)
+ 		return -EINVAL;
+ 
++	iris_hfi_dump(core, "cmd", pkt, pkt_size);
++
+ 	if (!iris_hfi_queue_write(q_info, pkt, pkt_size)) {
+ 		iris_vpu_raise_interrupt(core);
+ 	} else {
+@@ -168,6 +187,8 @@ int iris_hfi_queue_msg_read(struct iris_core *core, void *pkt)
+ 		goto unlock;
+ 	}
+ 
++	iris_hfi_dump(core, "msg", pkt, *(u32 *)pkt);
++
+ unlock:
+ 	mutex_unlock(&core->lock);
+ 
+diff --git a/drivers/media/platform/qcom/iris/iris_vpu_buffer.c b/drivers/media/platform/qcom/iris/iris_vpu_buffer.c
+index 428b23af3c..88a32ca2fb 100644
+--- a/drivers/media/platform/qcom/iris/iris_vpu_buffer.c
++++ b/drivers/media/platform/qcom/iris/iris_vpu_buffer.c
+@@ -3,6 +3,8 @@
+  * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+  */
+ 
++#include <linux/moduleparam.h>
++
+ #include "iris_instance.h"
+ #include "iris_vpu_buffer.h"
+ #include "iris_hfi_gen1_defines.h"
+@@ -2251,10 +2253,14 @@ static u32 internal_buffer_count(struct iris_inst *inst,
+ 	return 0;
+ }
+ 
++static bool enc_dpb;
++module_param(enc_dpb, bool, 0644);
++MODULE_PARM_DESC(enc_dpb, "allocate encoder DPB (reconstruction) buffers, required by VPU2");
++
+ static inline int iris_vpu_dpb_count(struct iris_inst *inst)
+ {
+ 	if (inst->domain == ENCODER)
+-		return 4;
++		return enc_dpb ? 4 : 0;
+ 
+ 	if (inst->codec == V4L2_PIX_FMT_AV1)
+ 		return 11;
+diff --git a/drivers/media/platform/qcom/iris/iris_vpu_common.c b/drivers/media/platform/qcom/iris/iris_vpu_common.c
+index 5c660f9425..d3a8c49535 100644
+--- a/drivers/media/platform/qcom/iris/iris_vpu_common.c
++++ b/drivers/media/platform/qcom/iris/iris_vpu_common.c
+@@ -4,6 +4,7 @@
+  */
+ 
+ #include <linux/iopoll.h>
++#include <linux/moduleparam.h>
+ #include <linux/pm_opp.h>
+ #include <linux/reset.h>
+ 
+@@ -316,8 +317,15 @@ int iris_vpu_set_hwmode(struct iris_core *core)
+ 	return dev_pm_genpd_set_hwmode(core->pmdomain_tbl->pd_devs[IRIS_HW_POWER_DOMAIN], true);
+ }
+ 
++static bool no_hwmode;
++module_param(no_hwmode, bool, 0644);
++MODULE_PARM_DESC(no_hwmode, "debug: keep the vcodec GDSC under software control");
++
+ int iris_vpu_switch_to_hwmode(struct iris_core *core)
+ {
++	if (no_hwmode)
++		return 0;
++
+ 	return core->iris_platform_data->vpu_ops->set_hwmode(core);
+ }
+ 

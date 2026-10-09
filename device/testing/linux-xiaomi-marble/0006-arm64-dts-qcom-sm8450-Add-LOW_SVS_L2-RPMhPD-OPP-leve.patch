@@ -1,0 +1,71 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jens Reidel <adrian@travitia.xyz>
+Date: Sun, 4 Feb 2024 05:33:46 +0100
+Subject: [PATCH] arm64: dts: qcom: sm8450: Add LOW_SVS_L2 RPMhPD OPP level
+
+This is used by GPU on SM8475 and overwriting the entire table in that
+DTS just seems wrong.
+
+Signed-off-by: Jens Reidel <adrian@travitia.xyz>
+(cherry picked from commit 31214de4f4e987e9efebab9cb0c8756c9cf9f387)
+---
+ arch/arm64/boot/dts/qcom/sm8450.dtsi | 22 +++++++++++++---------
+ 1 file changed, 13 insertions(+), 9 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8450.dtsi b/arch/arm64/boot/dts/qcom/sm8450.dtsi
+index ff1b8450e5..c16cc84dd5 100644
+--- a/arch/arm64/boot/dts/qcom/sm8450.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8450.dtsi
+@@ -5229,39 +5229,43 @@ rpmhpd_opp_low_svs_l1: opp5 {
+ 						opp-level = <RPMH_REGULATOR_LEVEL_LOW_SVS_L1>;
+ 					};
+ 
+-					rpmhpd_opp_svs: opp6 {
++					rpmhpd_opp_low_svs_l2: opp6 {
++						opp-level = <RPMH_REGULATOR_LEVEL_LOW_SVS_L2>;
++					};
++
++					rpmhpd_opp_svs: opp7 {
+ 						opp-level = <RPMH_REGULATOR_LEVEL_SVS>;
+ 					};
+ 
+-					rpmhpd_opp_svs_l0: opp7 {
++					rpmhpd_opp_svs_l0: opp8 {
+ 						opp-level = <RPMH_REGULATOR_LEVEL_SVS_L0>;
+ 					};
+ 
+-					rpmhpd_opp_svs_l1: opp8 {
++					rpmhpd_opp_svs_l1: opp9 {
+ 						opp-level = <RPMH_REGULATOR_LEVEL_SVS_L1>;
+ 					};
+ 
+-					rpmhpd_opp_svs_l2: opp9 {
++					rpmhpd_opp_svs_l2: opp10 {
+ 						opp-level = <RPMH_REGULATOR_LEVEL_SVS_L2>;
+ 					};
+ 
+-					rpmhpd_opp_nom: opp10 {
++					rpmhpd_opp_nom: opp11 {
+ 						opp-level = <RPMH_REGULATOR_LEVEL_NOM>;
+ 					};
+ 
+-					rpmhpd_opp_nom_l1: opp11 {
++					rpmhpd_opp_nom_l1: opp12 {
+ 						opp-level = <RPMH_REGULATOR_LEVEL_NOM_L1>;
+ 					};
+ 
+-					rpmhpd_opp_nom_l2: opp12 {
++					rpmhpd_opp_nom_l2: opp13 {
+ 						opp-level = <RPMH_REGULATOR_LEVEL_NOM_L2>;
+ 					};
+ 
+-					rpmhpd_opp_turbo: opp13 {
++					rpmhpd_opp_turbo: opp14 {
+ 						opp-level = <RPMH_REGULATOR_LEVEL_TURBO>;
+ 					};
+ 
+-					rpmhpd_opp_turbo_l1: opp14 {
++					rpmhpd_opp_turbo_l1: opp15 {
+ 						opp-level = <RPMH_REGULATOR_LEVEL_TURBO_L1>;
+ 					};
+ 				};

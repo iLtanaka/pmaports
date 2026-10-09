@@ -1,0 +1,100 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Tue, 6 Oct 2026 11:39:13 +0800
+Subject: [PATCH] ASoC: qcom: audioreach: enable TDM data output; match stock
+ marble TDM config
+
+Captured from stock Android (AGM) on marble: TDM_INTF_CFG with
+ctrl_data_out_enable=1, 4 slots x 32 bit, short sync, 1-bit delay and the
+TER_TDM_IBIT clock voted with INVERT_COUPLE_NO. Enable data output (the
+DSP clocks the bus but never pulls data otherwise), default the marble
+debug knobs to 4 slots / DSP_A and add a tdm_clk_attr override for testing.
+
+---
+ sound/soc/qcom/qdsp6/audioreach.c         |  3 ++-
+ sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c | 18 ++++++++++++++++--
+ sound/soc/qcom/sc8280xp.c                 |  6 +++---
+ 3 files changed, 21 insertions(+), 6 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/audioreach.c b/sound/soc/qcom/qdsp6/audioreach.c
+index c5fbee548f..c3d0d27164 100644
+--- a/sound/soc/qcom/qdsp6/audioreach.c
++++ b/sound/soc/qcom/qdsp6/audioreach.c
+@@ -1090,7 +1090,8 @@ static int audioreach_tdm_set_media_format(struct q6apm_graph *graph,
+ 
+ 	intf_cfg->cfg.lpaif_type = module->hw_interface_type;
+ 	intf_cfg->cfg.intf_idx = module->hw_interface_idx;
+-	intf_cfg->cfg.ctrl_data_out_enable = TDM_CTRL_DATA_OE_DISABLE;
++	/* stock Xiaomi/AGM config enables data output, the DSP never pulls data otherwise */
++	intf_cfg->cfg.ctrl_data_out_enable = TDM_CTRL_DATA_OE_ENABLE;
+ 	intf_cfg->cfg.nslots_per_frame = nslots;
+ 	intf_cfg->cfg.slot_width = slot_width;
+ 	intf_cfg->cfg.slot_mask = cfg->tdm_slot_mask ? cfg->tdm_slot_mask :
+diff --git a/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c b/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c
+index d79aef55bb..257ec77409 100644
+--- a/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c
++++ b/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c
+@@ -5,6 +5,7 @@
+ #include <linux/init.h>
+ #include <linux/clk-provider.h>
+ #include <linux/module.h>
++#include <linux/moduleparam.h>
+ #include <linux/device.h>
+ #include <linux/platform_device.h>
+ #include <linux/of.h>
+@@ -33,12 +34,25 @@ struct q6dsp_cc {
+ 	const struct q6dsp_clk_desc *desc;
+ };
+ 
++/* Debug: override the DT attribute of the tertiary TDM bit clock (0 = use DT) */
++static unsigned int tdm_clk_attr;
++module_param(tdm_clk_attr, uint, 0644);
++MODULE_PARM_DESC(tdm_clk_attr, "override TER_TDM_IBIT clock attribute (0 = from DT)");
++
++static int clk_q6dsp_attr(struct q6dsp_clk *clk)
++{
++	if (tdm_clk_attr && clk->q6dsp_clk_id == LPASS_CLK_ID_TER_TDM_IBIT)
++		return tdm_clk_attr;
++
++	return clk->attributes;
++}
++
+ static int clk_q6dsp_prepare(struct clk_hw *hw)
+ {
+ 	struct q6dsp_clk *clk = to_q6dsp_clk(hw);
+ 	struct q6dsp_cc *cc = dev_get_drvdata(clk->dev);
+ 
+-	return cc->desc->lpass_set_clk(clk->dev, clk->q6dsp_clk_id, clk->attributes,
++	return cc->desc->lpass_set_clk(clk->dev, clk->q6dsp_clk_id, clk_q6dsp_attr(clk),
+ 				     Q6DSP_LPASS_CLK_ROOT_DEFAULT, clk->rate);
+ }
+ 
+@@ -47,7 +61,7 @@ static void clk_q6dsp_unprepare(struct clk_hw *hw)
+ 	struct q6dsp_clk *clk = to_q6dsp_clk(hw);
+ 	struct q6dsp_cc *cc = dev_get_drvdata(clk->dev);
+ 
+-	cc->desc->lpass_set_clk(clk->dev, clk->q6dsp_clk_id, clk->attributes,
++	cc->desc->lpass_set_clk(clk->dev, clk->q6dsp_clk_id, clk_q6dsp_attr(clk),
+ 			      Q6DSP_LPASS_CLK_ROOT_DEFAULT, 0);
+ }
+ 
+diff --git a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
+index 5930b733c7..6a72bd6885 100644
+--- a/sound/soc/qcom/sc8280xp.c
++++ b/sound/soc/qcom/sc8280xp.c
+@@ -19,12 +19,12 @@
+ #define SC8280XP_TDM_ACTIVE_SLOTS	2
+ #define SC8280XP_TDM_SLOT_WIDTH		32
+ 
+-/* Debug knobs for TDM bring-up; stock (qcom,tdm-max-slots) uses 8 slots */
+-static unsigned int tdm_slots = 8;
++/* Debug knobs for TDM bring-up; stock AGM: 4 slots, short sync (DSP_A) */
++static unsigned int tdm_slots = 4;
+ module_param(tdm_slots, uint, 0644);
+ MODULE_PARM_DESC(tdm_slots, "TDM slots per frame");
+ 
+-static unsigned int tdm_fmt;
++static unsigned int tdm_fmt = 1;
+ module_param(tdm_fmt, uint, 0644);
+ MODULE_PARM_DESC(tdm_fmt, "TDM frame format: 0 = I2S (long sync), 1 = DSP_A, 2 = DSP_B");
+ 

@@ -1,0 +1,258 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Thu, 8 Oct 2026 11:18:04 +0800
+Subject: [PATCH] power: supply: qcom_battmgr: support Xiaomi fast charge
+ authentication
+
+Xiaomi's ADSP charger firmware on marble only allows high-voltage charging
+after the host acknowledges the adapter (opcodes 0x50/0x51, AUTHENTIC and
+PD_VERIFIED properties). Do that handshake when USB goes online, gated to
+xiaomi,marble.
+
+Also:
+- ignore the unsolicited 0x50 charger log packets instead of completing
+  the pending request with them (that desynced replies and timed out
+  sysfs reads)
+- compute power_now from voltage and current (the firmware reports a
+  fixed value)
+- report ENODATA for the 0xffff time_to_full/time_to_empty values
+- take voltage_min_design from the monitored-battery node
+
+---
+ drivers/power/supply/qcom_battmgr.c | 119 +++++++++++++++++++++++++++-
+ 1 file changed, 118 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
+index 05d84f8ebf..c2fec5d45a 100644
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -36,6 +36,7 @@ enum qcom_battmgr_variant {
+ #define NOTIF_BAT_PROPERTY		0x30
+ #define NOTIF_USB_PROPERTY		0x32
+ #define NOTIF_WLS_PROPERTY		0x34
++#define NOTIF_XM_STATUS			0x50
+ #define NOTIF_BAT_STATUS		0x80
+ #define NOTIF_BAT_INFO			0x81
+ #define NOTIF_BAT_CHARGING_STATE	0x83
+@@ -100,6 +101,14 @@ enum qcom_battmgr_variant {
+ #define WLS_BOOST_EN			6
+ 
+ #define BATTMGR_CHG_CTRL_LIMIT_EN	0x48
++#define BATTMGR_XM_PROPERTY_GET		0x50
++#define BATTMGR_XM_PROPERTY_SET		0x51
++
++#define XM_PROP_AUTHENTIC		3
++
++/* Firmware value for "time to full/empty unknown" */
++#define BATT_TIME_UNKNOWN		0xffff
++
+ #define CHARGE_CTRL_START_THR_MIN	50
+ #define CHARGE_CTRL_START_THR_MAX	95
+ #define CHARGE_CTRL_END_THR_MIN		55
+@@ -339,6 +348,16 @@ struct qcom_battmgr {
+ 	struct qcom_battmgr_wireless wireless;
+ 
+ 	struct work_struct enable_work;
++	struct power_supply_battery_info *bat_info;
++
++	/*
++	 * Xiaomi ADSP firmware limits charging to 5 V until the HLOS reports
++	 * the battery as authentic (XM_PROP_AUTHENTIC), which the stock
++	 * batterysecret daemon does on every plug-in.
++	 */
++	struct work_struct xm_auth_work;
++	bool xm_auth;
++	bool xm_authenticated;
+ 
+ 	/*
+ 	 * @lock is used to prevent concurrent power supply requests to the
+@@ -467,6 +486,25 @@ static int qcom_battmgr_bat_sm8350_update(struct qcom_battmgr *battmgr,
+ 	if (psp >= ARRAY_SIZE(sm8350_bat_prop_map))
+ 		return -EINVAL;
+ 
++	/*
++	 * The SM8475 firmware answers BATT_POWER_NOW with a constant 10 W
++	 * placeholder, so derive it from voltage and current instead.
++	 */
++	if (battmgr->bat_const_curr_id && psp == POWER_SUPPLY_PROP_POWER_NOW) {
++		mutex_lock(&battmgr->lock);
++		ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_GET,
++						    BATT_VOLT_NOW, 0);
++		if (!ret)
++			ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_GET,
++							    BATT_CURR_NOW, 0);
++		if (!ret)
++			battmgr->status.power_now =
++				div_s64((s64)battmgr->status.voltage_now *
++					battmgr->status.current_now, MICRO);
++		mutex_unlock(&battmgr->lock);
++		return ret;
++	}
++
+ 	prop = sm8350_bat_prop_map[psp];
+ 	if (battmgr->bat_const_curr_id && prop >= BATT_TEMP)
+ 		prop++;
+@@ -525,6 +563,12 @@ static int qcom_battmgr_bat_get_property(struct power_supply *psy,
+ 	enum qcom_battmgr_unit unit = battmgr->unit;
+ 	int ret;
+ 
++	if (psp == POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN) {
++		if (!battmgr->bat_info)
++			return -ENODATA;
++		return power_supply_battery_info_get_prop(battmgr->bat_info, psp, val);
++	}
++
+ 	if (!battmgr->service_up)
+ 		return -EAGAIN;
+ 
+@@ -641,9 +685,13 @@ static int qcom_battmgr_bat_get_property(struct power_supply *psy,
+ 		val->intval = battmgr->status.soh_percent;
+ 		break;
+ 	case POWER_SUPPLY_PROP_TIME_TO_EMPTY_AVG:
++		if (battmgr->status.discharge_time == BATT_TIME_UNKNOWN)
++			return -ENODATA;
+ 		val->intval = battmgr->status.discharge_time;
+ 		break;
+ 	case POWER_SUPPLY_PROP_TIME_TO_FULL_AVG:
++		if (battmgr->status.charge_time == BATT_TIME_UNKNOWN)
++			return -ENODATA;
+ 		val->intval = battmgr->status.charge_time;
+ 		break;
+ 	case POWER_SUPPLY_PROP_CHARGE_CONTROL_START_THRESHOLD:
+@@ -903,6 +951,7 @@ static const enum power_supply_property sm8350_bat_props[] = {
+ 	POWER_SUPPLY_PROP_INTERNAL_RESISTANCE,
+ 	POWER_SUPPLY_PROP_STATE_OF_HEALTH,
+ 	POWER_SUPPLY_PROP_POWER_NOW,
++	POWER_SUPPLY_PROP_VOLTAGE_MIN_DESIGN,
+ };
+ 
+ static const struct power_supply_desc sm8350_bat_psy_desc = {
+@@ -1235,6 +1284,10 @@ static void qcom_battmgr_notification(struct qcom_battmgr *battmgr,
+ 	case NOTIF_WLS_PROPERTY:
+ 		power_supply_changed(battmgr->wls_psy);
+ 		break;
++	case NOTIF_XM_STATUS:
++		if (battmgr->xm_auth && !battmgr->xm_authenticated)
++			schedule_work(&battmgr->xm_auth_work);
++		break;
+ 	default:
+ 		dev_err(battmgr->dev, "unknown notification: %#x\n", notification);
+ 		break;
+@@ -1525,7 +1578,12 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+ 
+ 		switch (property) {
+ 		case USB_ONLINE:
+-			battmgr->usb.online = le32_to_cpu(resp->intval.value);
++			val = le32_to_cpu(resp->intval.value);
++			if (val && !battmgr->usb.online && battmgr->xm_auth)
++				schedule_work(&battmgr->xm_auth_work);
++			else if (!val)
++				WRITE_ONCE(battmgr->xm_authenticated, false);
++			battmgr->usb.online = val;
+ 			break;
+ 		case USB_VOLT_NOW:
+ 			battmgr->usb.voltage_now = le32_to_cpu(resp->intval.value);
+@@ -1589,6 +1647,20 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+ 	case BATTMGR_CHG_CTRL_LIMIT_EN:
+ 		battmgr->error = 0;
+ 		break;
++	case BATTMGR_XM_PROPERTY_SET:
++		if (payload_len != sizeof(resp->intval)) {
++			battmgr->error = -ENODATA;
++			break;
++		}
++		battmgr->error = le32_to_cpu(resp->intval.result);
++		break;
++	case BATTMGR_XM_PROPERTY_GET:
++		/*
++		 * Never requested by us: the Xiaomi firmware pushes its charger
++		 * debug log (~every 10 s) with this opcode. It is not a reply,
++		 * so it must not complete a request that is in flight.
++		 */
++		return;
+ 	default:
+ 		dev_warn(battmgr->dev, "unknown message %#x\n", opcode);
+ 		break;
+@@ -1613,6 +1685,32 @@ static void qcom_battmgr_callback(const void *data, size_t len, void *priv)
+ 		qcom_battmgr_sm8350_callback(battmgr, data, len);
+ }
+ 
++static void qcom_battmgr_xm_auth_worker(struct work_struct *work)
++{
++	struct qcom_battmgr *battmgr = container_of(work, struct qcom_battmgr, xm_auth_work);
++	int ret;
++
++	if (!battmgr->service_up)
++		return;
++
++	mutex_lock(&battmgr->lock);
++	if (battmgr->xm_authenticated) {
++		mutex_unlock(&battmgr->lock);
++		return;
++	}
++
++	ret = qcom_battmgr_request_property(battmgr, BATTMGR_XM_PROPERTY_SET,
++					    XM_PROP_AUTHENTIC, 1);
++	if (!ret)
++		battmgr->xm_authenticated = true;
++	mutex_unlock(&battmgr->lock);
++
++	if (ret)
++		dev_warn(battmgr->dev, "failed to report battery as authentic: %d\n", ret);
++	else
++		dev_dbg(battmgr->dev, "battery reported as authentic\n");
++}
++
+ static void qcom_battmgr_enable_worker(struct work_struct *work)
+ {
+ 	struct qcom_battmgr *battmgr = container_of(work, struct qcom_battmgr, enable_work);
+@@ -1623,9 +1721,18 @@ static void qcom_battmgr_enable_worker(struct work_struct *work)
+ 	};
+ 	int ret;
+ 
++	mutex_lock(&battmgr->lock);
+ 	ret = qcom_battmgr_request(battmgr, &req, sizeof(req));
++	mutex_unlock(&battmgr->lock);
+ 	if (ret)
+ 		dev_err(battmgr->dev, "failed to request power notifications\n");
++
++	if (battmgr->xm_auth)
++		schedule_work(&battmgr->xm_auth_work);
++
++	/* Properties returned -EAGAIN until now, make userspace re-read them */
++	power_supply_changed(battmgr->bat_psy);
++	power_supply_changed(battmgr->usb_psy);
+ }
+ 
+ static void qcom_battmgr_pdr_notify(void *priv, int state)
+@@ -1693,6 +1800,7 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
+ 
+ 	battmgr->bat_const_curr_id = of_device_is_compatible(dev->parent->of_node,
+ 							      "qcom,sm8475-pmic-glink");
++	battmgr->xm_auth = of_machine_is_compatible("xiaomi,marble");
+ 
+ 	ret = qcom_battmgr_charge_control_thresholds_init(battmgr);
+ 	if (ret < 0)
+@@ -1736,6 +1844,10 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
+ 			return dev_err_probe(dev, PTR_ERR(battmgr->bat_psy),
+ 					     "failed to register battery power supply\n");
+ 
++		/* Optional monitored-battery node, for the design voltage */
++		if (power_supply_get_battery_info(battmgr->bat_psy, &battmgr->bat_info))
++			battmgr->bat_info = NULL;
++
+ 		battmgr->usb_psy = devm_power_supply_register(dev, &sm8350_usb_psy_desc, &psy_cfg_supply);
+ 		if (IS_ERR(battmgr->usb_psy))
+ 			return dev_err_probe(dev, PTR_ERR(battmgr->usb_psy),
+@@ -1752,6 +1864,11 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
+ 	if (ret)
+ 		return ret;
+ 
++	ret = devm_work_autocancel(dev, &battmgr->xm_auth_work,
++				   qcom_battmgr_xm_auth_worker);
++	if (ret)
++		return ret;
++
+ 	battmgr->client = devm_pmic_glink_client_alloc(dev, PMIC_GLINK_OWNER_BATTMGR,
+ 						       qcom_battmgr_callback,
+ 						       qcom_battmgr_pdr_notify,

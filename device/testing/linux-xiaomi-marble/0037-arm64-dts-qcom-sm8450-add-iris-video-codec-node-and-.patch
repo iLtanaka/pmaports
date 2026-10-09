@@ -1,0 +1,107 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Sun, 4 Oct 2026 12:49:27 +0800
+Subject: [PATCH] arm64: dts: qcom: sm8450: add iris video-codec node and
+ enable on marble
+
+---
+ arch/arm64/boot/dts/qcom/sm8450.dtsi          | 70 +++++++++++++++++++
+ .../boot/dts/qcom/sm8475-xiaomi-marble.dts    |  4 ++
+ 2 files changed, 74 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8450.dtsi b/arch/arm64/boot/dts/qcom/sm8450.dtsi
+index 84056e1a15..73ec186435 100644
+--- a/arch/arm64/boot/dts/qcom/sm8450.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8450.dtsi
+@@ -3219,6 +3219,76 @@ IPCC_MPROC_SIGNAL_GLINK_QMP
+ 			};
+ 		};
+ 
++		iris: video-codec@aa00000 {
++			compatible = "qcom,sm8450-iris";
++			reg = <0 0x0aa00000 0 0xf0000>;
++			interrupts = <GIC_SPI 174 IRQ_TYPE_LEVEL_HIGH>;
++
++			power-domains = <&videocc VIDEO_CC_MVS0C_GDSC>,
++					<&videocc VIDEO_CC_MVS0_GDSC>,
++					<&rpmhpd RPMHPD_MXC>,
++					<&rpmhpd RPMHPD_MMCX>;
++			power-domain-names = "venus",
++					     "vcodec0",
++					     "mxc",
++					     "mmcx";
++			operating-points-v2 = <&iris_opp_table>;
++
++			clocks = <&gcc GCC_VIDEO_AXI0_CLK>,
++				 <&videocc VIDEO_CC_MVS0C_CLK>,
++				 <&videocc VIDEO_CC_MVS0_CLK>;
++			clock-names = "iface",
++				      "core",
++				      "vcodec0_core";
++
++			interconnects = <&gem_noc MASTER_APPSS_PROC QCOM_ICC_TAG_ACTIVE_ONLY
++					 &config_noc SLAVE_VENUS_CFG QCOM_ICC_TAG_ACTIVE_ONLY>,
++					<&mmss_noc MASTER_VIDEO QCOM_ICC_TAG_ALWAYS
++					 &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>;
++			interconnect-names = "cpu-cfg",
++					     "video-mem";
++
++			memory-region = <&video_mem>;
++
++			resets = <&gcc GCC_VIDEO_AXI0_CLK_ARES>,
++				 <&videocc CVP_VIDEO_CC_MVS0C_BCR>;
++			reset-names = "bus", "core";
++
++			iommus = <&apps_smmu 0x2180 0x400>,
++				 <&apps_smmu 0x2187 0x400>;
++			dma-coherent;
++
++			status = "disabled";
++
++			iris_opp_table: opp-table {
++				compatible = "operating-points-v2";
++
++				opp-240000000 {
++					opp-hz = /bits/ 64 <240000000>;
++					required-opps = <&rpmhpd_opp_low_svs>,
++							<&rpmhpd_opp_low_svs>;
++				};
++
++				opp-338000000 {
++					opp-hz = /bits/ 64 <338000000>;
++					required-opps = <&rpmhpd_opp_svs>,
++							<&rpmhpd_opp_svs>;
++				};
++
++				opp-366000000 {
++					opp-hz = /bits/ 64 <366000000>;
++					required-opps = <&rpmhpd_opp_svs_l1>,
++							<&rpmhpd_opp_svs_l1>;
++				};
++
++				opp-444000000 {
++					opp-hz = /bits/ 64 <444000000>;
++					required-opps = <&rpmhpd_opp_nom>,
++							<&rpmhpd_opp_nom>;
++				};
++			};
++		};
++
+ 		videocc: clock-controller@aaf0000 {
+ 			compatible = "qcom,sm8450-videocc";
+ 			reg = <0 0x0aaf0000 0 0x10000>;
+diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts
+index f0c2526f9b..2530c661f5 100644
+--- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts
++++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts
+@@ -384,6 +384,10 @@ zap-shader {
+ 	};
+ };
+ 
++&iris {
++	status = "okay";
++};
++
+ &mdss {
+ 	status = "okay";
+ };

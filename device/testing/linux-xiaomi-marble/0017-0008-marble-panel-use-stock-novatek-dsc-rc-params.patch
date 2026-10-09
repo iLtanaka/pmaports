@@ -1,0 +1,77 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Fri, 2 Oct 2026 14:15:39 +0800
+Subject: [PATCH] 0008-marble-panel-use-stock-novatek-dsc-rc-params
+
+---
+ drivers/gpu/drm/msm/dsi/dsi_host.c            | 15 ++++++----
+ .../drm/panel/panel-xiaomi-m16t-36-02-0a.c    | 30 +++++++++++++++++++
+ 2 files changed, 40 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/dsi/dsi_host.c b/drivers/gpu/drm/msm/dsi/dsi_host.c
+index b05cf24a00..f8d7cdba9d 100644
+--- a/drivers/gpu/drm/msm/dsi/dsi_host.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_host.c
+@@ -1914,11 +1914,16 @@ static int dsi_populate_dsc_params(struct msm_dsi_host *msm_host, struct drm_dsc
+ 	drm_dsc_set_const_params(dsc);
+ 	drm_dsc_set_rc_buf_thresh(dsc);
+ 
+-	/* DPU supports only pre-SCR panels */
+-	ret = drm_dsc_setup_rc_params(dsc, DRM_DSC_1_1_PRE_SCR);
+-	if (ret) {
+-		DRM_DEV_ERROR(&msm_host->pdev->dev, "could not find DSC RC parameters\n");
+-		return ret;
++	/*
++	 * Some panels (e.g. Novatek DDICs) have a fixed decoder config and
++	 * provide matching RC parameters themselves; don't overwrite them.
++	 */
++	if (!dsc->rc_range_params[DSC_NUM_BUF_RANGES - 1].range_max_qp) {
++		ret = drm_dsc_setup_rc_params(dsc, DRM_DSC_1_1_PRE_SCR);
++		if (ret) {
++			DRM_DEV_ERROR(&msm_host->pdev->dev, "could not find DSC RC parameters\n");
++			return ret;
++		}
+ 	}
+ 
+ 	dsc->initial_scale_value = drm_dsc_initial_scale_value(dsc);
+diff --git a/drivers/gpu/drm/panel/panel-xiaomi-m16t-36-02-0a.c b/drivers/gpu/drm/panel/panel-xiaomi-m16t-36-02-0a.c
+index d8419959d2..1260b47599 100644
+--- a/drivers/gpu/drm/panel/panel-xiaomi-m16t-36-02-0a.c
++++ b/drivers/gpu/drm/panel/panel-xiaomi-m16t-36-02-0a.c
+@@ -373,6 +373,36 @@ static int xiaomi_m16t_probe(struct mipi_dsi_device *dsi)
+ 	ctx->dsc.bits_per_pixel = 8 << 4; /* 4 fractional bits */
+ 	ctx->dsc.block_pred_enable = true;
+ 
++	/*
++	 * The NT37703-class DDIC decodes with a fixed config (registers 0x91/
++	 * 0x93/0x95 in the init sequence). Match stock's sde_dsc_helper for
++	 * this panel id (is_use_nt37703/nvt_dsc_config, DSC 1.2 444 10bpc
++	 * 8bpp): first_line_bpg_offset 13 and the Novatek RC tables. With
++	 * these, the derived initial_dec_delay 0x225, scale_increment 0x1d5,
++	 * nfl_bpg 0x57a, slice_bpg 0x516, final_offset 0x10f0 equal the 0x91
++	 * register contents.
++	 */
++	ctx->dsc.first_line_bpg_offset = 13;
++	ctx->dsc.initial_offset = 6144;
++	ctx->dsc.initial_xmit_delay = 512;
++	ctx->dsc.flatness_min_qp = 7;
++	ctx->dsc.flatness_max_qp = 16;
++	ctx->dsc.rc_quant_incr_limit0 = 15;
++	ctx->dsc.rc_quant_incr_limit1 = 15;
++	for (int i = 0; i < DSC_NUM_BUF_RANGES; i++) {
++		static const u8 min_qp[DSC_NUM_BUF_RANGES] = {
++			0, 4, 5, 5, 7, 7, 7, 7, 7, 8, 9, 9, 9, 12, 16 };
++		static const u8 max_qp[DSC_NUM_BUF_RANGES] = {
++			8, 8, 9, 10, 11, 11, 11, 12, 13, 14, 14, 15, 15, 16, 17 };
++		static const s8 bpg[DSC_NUM_BUF_RANGES] = {
++			2, 0, 0, -2, -4, -6, -8, -8, -8, -10, -10, -10, -12, -12, -12 };
++
++		ctx->dsc.rc_range_params[i].range_min_qp = min_qp[i];
++		ctx->dsc.rc_range_params[i].range_max_qp = max_qp[i];
++		ctx->dsc.rc_range_params[i].range_bpg_offset =
++			bpg[i] & DSC_RANGE_BPG_OFFSET_MASK;
++	}
++
+ 	ret = mipi_dsi_attach(dsi);
+ 	if (ret < 0) {
+ 		drm_panel_remove(&ctx->panel);

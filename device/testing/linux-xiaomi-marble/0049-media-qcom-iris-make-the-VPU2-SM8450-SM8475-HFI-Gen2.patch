@@ -1,0 +1,115 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Tue, 6 Oct 2026 15:30:49 +0800
+Subject: [PATCH] media: qcom: iris: make the VPU2 (SM8450/SM8475) HFI Gen2
+ decoder work
+
+Compared with stock msm_vidc command/response captures:
+- send a bare HFI_CMD_RESUME after the input port settings change; the
+  VPU2 firmware rejects the SETTINGS_CHANGE payload, so the bitstream port
+  was never resumed and decoding stalled
+- program STAGE and PIPE before the first START, as stock does
+- no OPB on VPU2: UBWC (QC08C) output is written directly, without split
+  mode DPB buffers (new no_opb platform flag)
+
+H.264 1280x720 now decodes through GStreamer v4l2h264dec to NV12 with
+bit-exact luma.
+
+---
+ .../media/platform/qcom/iris/iris_hfi_gen2_command.c   |  8 +++++---
+ .../media/platform/qcom/iris/iris_platform_common.h    |  1 +
+ drivers/media/platform/qcom/iris/iris_platform_vpu2.c  |  1 +
+ drivers/media/platform/qcom/iris/iris_utils.c          |  8 ++++++++
+ drivers/media/platform/qcom/iris/iris_vdec.c           | 10 ++++++++++
+ 5 files changed, 25 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
+index e03d707ce1..2802666b74 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
+@@ -1180,6 +1180,8 @@ static int iris_hfi_gen2_session_resume_drc(struct iris_inst *inst, u32 plane)
+ {
+ 	struct iris_inst_hfi_gen2 *inst_hfi_gen2 = to_iris_inst_hfi_gen2(inst);
+ 	u32 payload = HFI_CMD_SETTINGS_CHANGE;
++	/* VPU2 firmware only accepts a bare RESUME after a settings change */
++	bool bare = inst->core->iris_platform_data->no_opb;
+ 
+ 	iris_hfi_gen2_packet_session_command(inst,
+ 					     HFI_CMD_RESUME,
+@@ -1187,9 +1189,9 @@ static int iris_hfi_gen2_session_resume_drc(struct iris_inst *inst, u32 plane)
+ 					     HFI_HOST_FLAGS_INTR_REQUIRED),
+ 					     iris_hfi_gen2_get_port(inst, plane),
+ 					     inst->session_id,
+-					     HFI_PAYLOAD_U32,
+-					     &payload,
+-					     sizeof(u32));
++					     bare ? HFI_PAYLOAD_NONE : HFI_PAYLOAD_U32,
++					     bare ? NULL : &payload,
++					     bare ? 0 : sizeof(u32));
+ 
+ 	return iris_hfi_queue_cmd_write(inst->core, inst_hfi_gen2->packet,
+ 					inst_hfi_gen2->packet->size);
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_common.h b/drivers/media/platform/qcom/iris/iris_platform_common.h
+index bfe284597c..00c795b3fe 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_common.h
++++ b/drivers/media/platform/qcom/iris/iris_platform_common.h
+@@ -321,6 +321,7 @@ struct iris_platform_data {
+ 	u32 num_vpp_pipe;
+ 	bool no_aon;
+ 	bool no_tz_fifo_reset;
++	bool no_opb;
+ 	u32 max_session_count;
+ 	/* max number of macroblocks per frame supported */
+ 	u32 max_core_mbpf;
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_vpu2.c b/drivers/media/platform/qcom/iris/iris_platform_vpu2.c
+index adc7de8c9e..59ea0cacac 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_vpu2.c
++++ b/drivers/media/platform/qcom/iris/iris_platform_vpu2.c
+@@ -155,6 +155,7 @@ const struct iris_platform_data sm8450_data = {
+ 	.tz_cp_config_data = tz_cp_config_vpu2,
+ 	.tz_cp_config_data_size = ARRAY_SIZE(tz_cp_config_vpu2),
+ 	.no_tz_fifo_reset = true,
++	.no_opb = true,
+ 	.num_vpp_pipe = 4,
+ 	.max_session_count = 16,
+ 	.max_core_mbpf = NUM_MBS_8K,
+diff --git a/drivers/media/platform/qcom/iris/iris_utils.c b/drivers/media/platform/qcom/iris/iris_utils.c
+index ba5c8dc128..d1ff35fa78 100644
+--- a/drivers/media/platform/qcom/iris/iris_utils.c
++++ b/drivers/media/platform/qcom/iris/iris_utils.c
+@@ -34,6 +34,14 @@ int iris_get_mbpf(struct iris_inst *inst)
+ 
+ bool iris_split_mode_enabled(struct iris_inst *inst)
+ {
++	/*
++	 * VPU2 (HFI Gen2) firmware has no OPB: UBWC output is written straight
++	 * to the output buffers without separate DPB buffers.
++	 */
++	if (inst->core->iris_platform_data->no_opb &&
++	    inst->fmt_dst->fmt.pix_mp.pixelformat == V4L2_PIX_FMT_QC08C)
++		return false;
++
+ 	return inst->fmt_dst->fmt.pix_mp.pixelformat == V4L2_PIX_FMT_NV12 ||
+ 		inst->fmt_dst->fmt.pix_mp.pixelformat == V4L2_PIX_FMT_QC08C ||
+ 		inst->fmt_dst->fmt.pix_mp.pixelformat == V4L2_PIX_FMT_P010 ||
+diff --git a/drivers/media/platform/qcom/iris/iris_vdec.c b/drivers/media/platform/qcom/iris/iris_vdec.c
+index 9e228b7042..a861438940 100644
+--- a/drivers/media/platform/qcom/iris/iris_vdec.c
++++ b/drivers/media/platform/qcom/iris/iris_vdec.c
+@@ -370,6 +370,16 @@ int iris_vdec_streamon_input(struct iris_inst *inst)
+ 	if (ret)
+ 		return ret;
+ 
++	/* VPU2 firmware wants the pipe/stage layout before the first START */
++	if (inst->core->iris_platform_data->no_opb) {
++		ret = iris_set_stage(inst, STAGE);
++		if (ret)
++			return ret;
++		ret = iris_set_pipe(inst, PIPE);
++		if (ret)
++			return ret;
++	}
++
+ 	iris_get_internal_buffers(inst, V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
+ 
+ 	ret = iris_destroy_dequeued_internal_buffers(inst, V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);

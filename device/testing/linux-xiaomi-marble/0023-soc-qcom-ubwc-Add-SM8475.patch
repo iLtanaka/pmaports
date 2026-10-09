@@ -1,0 +1,24 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Fri, 2 Oct 2026 17:15:30 +0800
+Subject: [PATCH] soc: qcom: ubwc: Add SM8475
+
+SM8475 has the same Adreno 730 / DPU 8.x UBWC setup as SM8450. Without
+an entry, qcom_ubwc_config_get_data() returns -EINVAL and both msm-mdss
+and the GPU fail to probe on SM8475 boards.
+---
+ drivers/soc/qcom/ubwc_config.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/soc/qcom/ubwc_config.c b/drivers/soc/qcom/ubwc_config.c
+index 3fe47d8f0f..c69ce8fe32 100644
+--- a/drivers/soc/qcom/ubwc_config.c
++++ b/drivers/soc/qcom/ubwc_config.c
+@@ -292,6 +292,7 @@ static const struct of_device_id qcom_ubwc_configs[] __maybe_unused = {
+ 	{ .compatible = "qcom,sm8250", .data = &sm8250_data, },
+ 	{ .compatible = "qcom,sm8350", .data = &sm8350_data, },
+ 	{ .compatible = "qcom,sm8450", .data = &sm8350_data, },
++	{ .compatible = "qcom,sm8475", .data = &sm8350_data, },
+ 	{ .compatible = "qcom,sm8550", .data = &sm8550_data, },
+ 	{ .compatible = "qcom,sm8650", .data = &sm8550_data, },
+ 	{ .compatible = "qcom,sm8750", .data = &sm8750_data, },

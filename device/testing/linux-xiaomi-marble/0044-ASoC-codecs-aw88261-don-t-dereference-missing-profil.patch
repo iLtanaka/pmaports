@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Tue, 6 Oct 2026 11:33:37 +0800
+Subject: [PATCH] ASoC: codecs: aw88261: don't dereference missing profile
+ names
+
+prof_name_list (or an entry of it) can be NULL depending on the ACF
+firmware, and the profile enum info callback then strscpy()s from a NULL
+pointer, oopsing in snd_ctl_elem_info (e.g. 'amixer contents') with the
+card controls lock held. Report such entries as missing instead.
+
+---
+ sound/soc/codecs/aw88261.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/sound/soc/codecs/aw88261.c b/sound/soc/codecs/aw88261.c
+index 679c99a00a..ff0545ec8c 100644
+--- a/sound/soc/codecs/aw88261.c
++++ b/sound/soc/codecs/aw88261.c
+@@ -445,6 +445,9 @@ static int aw88261_dev_get_prof_name(struct aw_device *aw_dev, int index, char *
+ 
+ 	prof_desc = &aw_dev->prof_info.prof_desc[index];
+ 
++	if (!prof_info->prof_name_list || !prof_info->prof_name_list[prof_desc->id])
++		return -EINVAL;
++
+ 	*prof_name = prof_info->prof_name_list[prof_desc->id];
+ 
+ 	return 0;

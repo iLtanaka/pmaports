@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Tue, 6 Oct 2026 10:20:29 +0800
+Subject: [PATCH] arm64: dts: qcom: sm8475-xiaomi-marble: enable modem (mpss)
+ and rmtfs
+
+Stock firmware allocates rmtfs dynamically and this device reuses the
+sm8450.dtsi rmtfs address for adsp_mem, so place rmtfs_mem in free RAM at
+0xa3000000 (free in the stock memory map) and enable remoteproc_mpss.
+
+---
+ .../boot/dts/qcom/sm8475-xiaomi-marble.dts    | 20 +++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts
+index 2530c661f5..8f5f632bb7 100644
+--- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts
++++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts
+@@ -185,6 +185,21 @@ ramoops@a7000000 {
+ 			no-map;
+ 		};
+ 
++		/*
++		 * Stock allocates rmtfs dynamically; the sm8450.dtsi address is
++		 * taken by adsp_mem here. 0xa2e00000-0xa6b80000 is free RAM in
++		 * the stock memory map, leave 2 MiB after adsp_mem.
++		 */
++		rmtfs_mem: memory@a3000000 {
++			compatible = "qcom,rmtfs-mem";
++			reg = <0x0 0xa3000000 0x0 0x282000>;
++			no-map;
++
++			qcom,client-id = <1>;
++			qcom,use-guard-pages;
++			qcom,vmid = <QCOM_SCM_VMID_MSS_MSA>;
++		};
++
+ 		splash_region@b8000000 {
+ 			reg = <0x0 0xb8000000 0x0 0x2b00000>;
+ 			no-map;
+@@ -500,6 +515,11 @@ &remoteproc_adsp {
+ 	status = "okay";
+ };
+ 
++&remoteproc_mpss {
++	firmware-name = "qcom/sm8475/xiaomi/marble/modem.mdt";
++	status = "okay";
++};
++
+ &i2c5 {
+ 	/*
+ 	 * i2c5's base pinctrl-0 (qup_i2c5_data_clk) lives under &tlmm, which is

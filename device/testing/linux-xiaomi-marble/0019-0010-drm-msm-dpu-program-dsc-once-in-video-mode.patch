@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Fri, 2 Oct 2026 14:15:39 +0800
+Subject: [PATCH] 0010-drm-msm-dpu-program-dsc-once-in-video-mode
+
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
+index 77a7f070df..32514694fa 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
+@@ -216,6 +216,8 @@ struct dpu_encoder_virt {
+ 
+ 	/* DSC configuration */
+ 	struct drm_dsc_config *dsc;
++	/* DSC already programmed since enable (video mode: program once) */
++	bool dsc_programmed;
+ };
+ 
+ #define to_dpu_encoder_virt(x) container_of(x, struct dpu_encoder_virt, base)
+@@ -1343,6 +1345,7 @@ static void dpu_encoder_virt_atomic_enable(struct drm_encoder *drm_enc,
+ 
+ 	dpu_enc = to_dpu_encoder_virt(drm_enc);
+ 	dpu_enc->dsc = dpu_encoder_get_dsc_config(drm_enc);
++	dpu_enc->dsc_programmed = false;
+ 
+ 	atomic_set(&dpu_enc->frame_done_timeout_cnt, 0);
+ 
+@@ -1391,6 +1394,7 @@ static void dpu_encoder_virt_atomic_disable(struct drm_encoder *drm_enc,
+ 
+ 	dpu_enc = to_dpu_encoder_virt(drm_enc);
+ 	DPU_DEBUG_ENC(dpu_enc, "\n");
++	dpu_enc->dsc_programmed = false;
+ 
+ 	crtc = drm_atomic_get_old_crtc_for_encoder(state, drm_enc);
+ 	if (crtc)
+@@ -2129,8 +2133,21 @@ void dpu_encoder_prepare_for_kickoff(struct drm_encoder *drm_enc)
+ 		}
+ 	}
+ 
+-	if (dpu_enc->dsc)
++	if (needs_hw_reset)
++		dpu_enc->dsc_programmed = false;
++
++	/*
++	 * In video mode the DSC encoder runs continuously; re-programming and
++	 * flushing it on every commit corrupts the slice row being encoded at
++	 * that moment (noise bands on updating content). Program it once per
++	 * enable (or after a CTL reset), like the downstream driver.
++	 */
++	if (dpu_enc->dsc && (!dpu_enc->dsc_programmed ||
++			     !dpu_enc->cur_master ||
++			     dpu_enc->cur_master->intf_mode != INTF_MODE_VIDEO)) {
+ 		dpu_encoder_prep_dsc(dpu_enc, dpu_enc->dsc);
++		dpu_enc->dsc_programmed = true;
++	}
+ }
+ 
+ /**

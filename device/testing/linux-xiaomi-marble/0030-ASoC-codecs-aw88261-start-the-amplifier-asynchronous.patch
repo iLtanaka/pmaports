@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Sat, 3 Oct 2026 02:27:39 +0800
+Subject: [PATCH] ASoC: codecs: aw88261: start the amplifier asynchronously
+
+The amplifier start checks for PLL lock, which needs BCK/WS. DSP backed
+CPU DAIs such as Qualcomm AudioReach only start the clocks at trigger,
+after the DAPM PRE_PMU event, so the synchronous start always failed
+(and blocked the stream from ever reaching trigger). Start it from a
+delayed work instead, using the so far unused
+AW88261_START_WORK_DELAY_MS.
+
+---
+ sound/soc/codecs/aw88261.c | 29 ++++++++++++++++++++++++++---
+ sound/soc/codecs/aw88261.h |  3 ++-
+ 2 files changed, 28 insertions(+), 4 deletions(-)
+
+diff --git a/sound/soc/codecs/aw88261.c b/sound/soc/codecs/aw88261.c
+index d41d51bdcf..679c99a00a 100644
+--- a/sound/soc/codecs/aw88261.c
++++ b/sound/soc/codecs/aw88261.c
+@@ -11,8 +11,10 @@
+ #include <linux/i2c.h>
+ #include <linux/firmware.h>
+ #include <linux/bitops.h>
++#include <linux/devm-helpers.h>
+ #include <linux/regmap.h>
+ #include <linux/regulator/consumer.h>
++#include <linux/workqueue.h>
+ #include <sound/soc.h>
+ #include <sound/pcm_params.h>
+ #include <sound/tlv.h>
+@@ -1032,24 +1034,41 @@ static const struct snd_kcontrol_new aw88261_controls[] = {
+ 		aw88261_profile_get, aw88261_profile_set),
+ };
+ 
++static void aw88261_start_work(struct work_struct *work)
++{
++	struct aw88261 *aw88261 =
++		container_of(work, struct aw88261, start_work.work);
++
++	mutex_lock(&aw88261->lock);
++	aw88261_start(aw88261);
++	mutex_unlock(&aw88261->lock);
++}
++
+ static int aw88261_playback_event(struct snd_soc_dapm_widget *w,
+ 				struct snd_kcontrol *k, int event)
+ {
+ 	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
+ 	struct aw88261 *aw88261 = snd_soc_component_get_drvdata(component);
+ 
+-	mutex_lock(&aw88261->lock);
+ 	switch (event) {
+ 	case SND_SOC_DAPM_PRE_PMU:
+-		aw88261_start(aw88261);
++		/*
++		 * The PLL only locks once BCK/WS run. DSP backed CPU DAIs
++		 * (e.g. Qualcomm AudioReach) start the clocks at trigger,
++		 * after DAPM power up, so start the amplifier asynchronously.
++		 */
++		queue_delayed_work(system_dfl_wq, &aw88261->start_work,
++				   msecs_to_jiffies(AW88261_START_WORK_DELAY_MS));
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMD:
++		cancel_delayed_work_sync(&aw88261->start_work);
++		mutex_lock(&aw88261->lock);
+ 		aw88261_dev_stop(aw88261->aw_pa);
++		mutex_unlock(&aw88261->lock);
+ 		break;
+ 	default:
+ 		break;
+ 	}
+-	mutex_unlock(&aw88261->lock);
+ 
+ 	return 0;
+ }
+@@ -1317,6 +1336,10 @@ static int aw88261_i2c_probe(struct i2c_client *i2c)
+ 	aw88261->rxr_slotvld_mask = 1 << AW88261_I2S_RXR_SLOTVLD_START_BIT;
+ 
+ 	mutex_init(&aw88261->lock);
++	ret = devm_delayed_work_autocancel(&i2c->dev, &aw88261->start_work,
++					   aw88261_start_work);
++	if (ret)
++		return ret;
+ 
+ 	i2c_set_clientdata(i2c, aw88261);
+ 
+diff --git a/sound/soc/codecs/aw88261.h b/sound/soc/codecs/aw88261.h
+index 496db73489..0aa03b0da7 100644
+--- a/sound/soc/codecs/aw88261.h
++++ b/sound/soc/codecs/aw88261.h
+@@ -517,7 +517,7 @@
+ #define AW88261_VCAL_FACTOR		(1<<13)
+ 
+ #define AW88261_START_RETRIES		(5)
+-#define AW88261_START_WORK_DELAY_MS	(0)
++#define AW88261_START_WORK_DELAY_MS	(30)
+ 
+ /* NOTE: 192000 has a reg value donwstream but not listed in datasheet */
+ #define AW88261_RATES (SNDRV_PCM_RATE_8000_48000 | \
+@@ -585,6 +585,7 @@ enum {
+ struct aw88261 {
+ 	struct aw_device *aw_pa;
+ 	struct mutex lock;
++	struct delayed_work start_work;
+ 	struct gpio_desc *reset_gpio;
+ 	struct regmap *regmap;
+ 	struct aw_container *aw_cfg;

@@ -1,0 +1,103 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Tue, 6 Oct 2026 11:13:24 +0800
+Subject: [PATCH] ASoC: qcom: sc8280xp: WIP TDM debug knobs (tdm_slots,
+ tdm_fmt); allow INVERT_COUPLE_NO clock attr
+
+Bring-up aids for the marble speakers. Default is 8 slots (stock
+qcom,tdm-max-slots) with 2 active. INVERT_COUPLE_NO is accepted by the
+clock driver but makes the Xiaomi ADSP reject TDM graph start, so the
+marble DT keeps COUPLE_NO.
+
+---
+ .../sound/qcom,q6dsp-lpass-ports.h            |  1 +
+ sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c     |  2 +-
+ sound/soc/qcom/sc8280xp.c                     | 32 +++++++++++++++----
+ 3 files changed, 28 insertions(+), 7 deletions(-)
+
+diff --git a/include/dt-bindings/sound/qcom,q6dsp-lpass-ports.h b/include/dt-bindings/sound/qcom,q6dsp-lpass-ports.h
+index 45850f2d43..ba96de31fe 100644
+--- a/include/dt-bindings/sound/qcom,q6dsp-lpass-ports.h
++++ b/include/dt-bindings/sound/qcom,q6dsp-lpass-ports.h
+@@ -243,5 +243,6 @@
+ #define LPASS_CLK_ATTRIBUTE_COUPLE_NO		0x1
+ #define LPASS_CLK_ATTRIBUTE_COUPLE_DIVIDEND	0x2
+ #define LPASS_CLK_ATTRIBUTE_COUPLE_DIVISOR	0x3
++#define LPASS_CLK_ATTRIBUTE_INVERT_COUPLE_NO	0x4
+ 
+ #endif /* __DT_BINDINGS_Q6_AUDIO_PORTS_H__ */
+diff --git a/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c b/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c
+index 03838582ae..d79aef55bb 100644
+--- a/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c
++++ b/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c
+@@ -113,7 +113,7 @@ static struct clk_hw *q6dsp_of_clk_hw_get(struct of_phandle_args *clkspec,
+ 	unsigned int idx = clkspec->args[0];
+ 	unsigned int attr = clkspec->args[1];
+ 
+-	if (idx >= Q6DSP_MAX_CLK_ID || attr > LPASS_CLK_ATTRIBUTE_COUPLE_DIVISOR) {
++	if (idx >= Q6DSP_MAX_CLK_ID || attr > LPASS_CLK_ATTRIBUTE_INVERT_COUPLE_NO) {
+ 		dev_err(cc->dev, "Invalid clk specifier (%d, %d)\n", idx, attr);
+ 		return ERR_PTR(-EINVAL);
+ 	}
+diff --git a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
+index 61d16e48f1..5930b733c7 100644
+--- a/sound/soc/qcom/sc8280xp.c
++++ b/sound/soc/qcom/sc8280xp.c
+@@ -16,9 +16,29 @@
+ #include "common.h"
+ #include "sdw.h"
+ 
+-#define SC8280XP_TDM_SLOTS		2
++#define SC8280XP_TDM_ACTIVE_SLOTS	2
+ #define SC8280XP_TDM_SLOT_WIDTH		32
+-#define SC8280XP_TDM_BCLK_RATE		(48000 * SC8280XP_TDM_SLOTS * SC8280XP_TDM_SLOT_WIDTH)
++
++/* Debug knobs for TDM bring-up; stock (qcom,tdm-max-slots) uses 8 slots */
++static unsigned int tdm_slots = 8;
++module_param(tdm_slots, uint, 0644);
++MODULE_PARM_DESC(tdm_slots, "TDM slots per frame");
++
++static unsigned int tdm_fmt;
++module_param(tdm_fmt, uint, 0644);
++MODULE_PARM_DESC(tdm_fmt, "TDM frame format: 0 = I2S (long sync), 1 = DSP_A, 2 = DSP_B");
++
++static unsigned int sc8280xp_tdm_daifmt(void)
++{
++	switch (tdm_fmt) {
++	case 1:
++		return SND_SOC_DAIFMT_DSP_A;
++	case 2:
++		return SND_SOC_DAIFMT_DSP_B;
++	default:
++		return SND_SOC_DAIFMT_I2S;
++	}
++}
+ 
+ struct sc8280xp_snd_data {
+ 	bool stream_prepared[AFE_PORT_MAX];
+@@ -46,13 +66,13 @@ static int sc8280xp_snd_init(struct snd_soc_pcm_runtime *rtd)
+ 		break;
+ 	case PRIMARY_TDM_RX_0...QUINARY_TDM_TX_7: {
+ 		struct snd_soc_dai *codec_dai;
+-		unsigned int mask = GENMASK(SC8280XP_TDM_SLOTS - 1, 0);
++		unsigned int mask = GENMASK(SC8280XP_TDM_ACTIVE_SLOTS - 1, 0);
+ 		int i;
+ 
+ 		/* I2S style framing (Philips), as expected by smart amps */
+ 		snd_soc_dai_set_fmt(cpu_dai, SND_SOC_DAIFMT_BP_FP |
+-				    SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF);
+-		snd_soc_dai_set_tdm_slot(cpu_dai, mask, mask, SC8280XP_TDM_SLOTS,
++				    sc8280xp_tdm_daifmt() | SND_SOC_DAIFMT_NB_NF);
++		snd_soc_dai_set_tdm_slot(cpu_dai, mask, mask, tdm_slots,
+ 					 SC8280XP_TDM_SLOT_WIDTH);
+ 		for_each_rtd_codec_dais(rtd, i, codec_dai)
+ 			snd_soc_dai_set_fmt(codec_dai, SND_SOC_DAIFMT_BC_FC |
+@@ -161,7 +181,7 @@ static int sc8280xp_snd_startup(struct snd_pcm_substream *substream)
+ 		if (ret)
+ 			return ret;
+ 
+-		ret = clk_set_rate(data->tdm_bclk, SC8280XP_TDM_BCLK_RATE);
++		ret = clk_set_rate(data->tdm_bclk, 48000 * tdm_slots * SC8280XP_TDM_SLOT_WIDTH);
+ 		if (!ret)
+ 			ret = clk_prepare_enable(data->tdm_bclk);
+ 		if (ret) {

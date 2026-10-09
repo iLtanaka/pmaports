@@ -1,0 +1,58 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Fri, 2 Oct 2026 14:15:39 +0800
+Subject: [PATCH] 0006-drm-msm-dsc-video-mode-24bit-pclk-for-10bpc
+
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c |  8 ++++++--
+ drivers/gpu/drm/msm/dsi/dsi_host.c                   | 10 +++++++---
+ 2 files changed, 13 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
+index ba810f26ea..d4af733067 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder_phys_vid.c
+@@ -134,8 +134,12 @@ static void drm_mode_to_intf_timing_params(
+ 		 * TODO: replace drm_dsc_get_bpp_int with logic to handle
+ 		 * fractional part if there is fraction
+ 		 */
+-		timing->width = timing->width * drm_dsc_get_bpp_int(dsc) /
+-				(dsc->bits_per_component * 3);
++		/*
++		 * The DPU->DSI interface carries 24 bits per pclk regardless of
++		 * the panel's bpc, so the compressed line is bpp*width/24 pclks.
++		 * (bpc*3 only equals 24 for 8bpc; 10bpc panels underflow.)
++		 */
++		timing->width = timing->width * drm_dsc_get_bpp_int(dsc) / 24;
+ 		timing->xres = timing->width;
+ 		timing->dce_bytes_per_line = msm_dsc_get_bytes_per_line(dsc);
+ 	}
+diff --git a/drivers/gpu/drm/msm/dsi/dsi_host.c b/drivers/gpu/drm/msm/dsi/dsi_host.c
+index 89face2670..d3adb6be19 100644
+--- a/drivers/gpu/drm/msm/dsi/dsi_host.c
++++ b/drivers/gpu/drm/msm/dsi/dsi_host.c
+@@ -616,8 +616,8 @@ dsi_adjust_pclk_for_compression(const struct drm_display_mode *mode,
+ 	if (is_bonded_dsi)
+ 		hdisplay /= 2;
+ 
+-	new_hdisplay = DIV_ROUND_UP(hdisplay * drm_dsc_get_bpp_int(dsc),
+-				    dsc->bits_per_component * 3);
++	/* 24 bits per pclk on the DPU->DSI bus, independent of bpc */
++	new_hdisplay = DIV_ROUND_UP(hdisplay * drm_dsc_get_bpp_int(dsc), 24);
+ 
+ 	if (is_bonded_dsi)
+ 		new_hdisplay *= 2;
+@@ -1073,8 +1073,12 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
+ 		 */
+ 		h_total -= hdisplay;
+ 		if (wide_bus_enabled) {
++			/*
++			 * marble: keep video mode at 24 bits per pclk to match
++			 * the DPU timing and pclk adjustment (proven on 10bpc).
++			 */
+ 			if (msm_host->mode_flags & MIPI_DSI_MODE_VIDEO)
+-				bits_per_pclk = dsc->bits_per_component * 3;
++				bits_per_pclk = 24;
+ 			else
+ 				bits_per_pclk = 48;
+ 		} else {

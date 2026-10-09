@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Danila Tikhonov <danila@jiaxyga.com>
+Date: Tue, 6 Feb 2024 22:19:36 +0300
+Subject: [PATCH] arm64: dts: sm8450: add bias and drive-strength configure for
+ uart20
+
+Signed-off-by: Danila Tikhonov <danila@jiaxyga.com>
+(cherry picked from commit 178403301baf1cb4dfa572b9682376336547d212)
+---
+ arch/arm64/boot/dts/qcom/sm8450.dtsi | 27 +++++++++++++++++++++++++--
+ 1 file changed, 25 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8450.dtsi b/arch/arm64/boot/dts/qcom/sm8450.dtsi
+index c16cc84dd5..84056e1a15 100644
+--- a/arch/arm64/boot/dts/qcom/sm8450.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8450.dtsi
+@@ -4314,8 +4314,31 @@ qup_uart7_tx: qup-uart7-tx-state {
+ 			};
+ 
+ 			qup_uart20_default: qup-uart20-default-state {
+-				pins = "gpio76", "gpio77", "gpio78", "gpio79";
+-				function = "qup20";
++				cts-pins {
++					pins = "gpio76";
++					function = "qup20";
++					bias-disable;
++				};
++
++				rts-pins {
++					pins = "gpio77";
++					function = "qup20";
++					drive-strength = <2>;
++					bias-pull-down;
++				};
++
++				tx-pins {
++					pins = "gpio78";
++					function = "qup20";
++					drive-strength = <2>;
++					bias-pull-up;
++				};
++
++				rx-pins {
++					pins = "gpio79";
++					function = "qup20";
++					bias-pull-down; // bias-disable;
++				};
+ 			};
+ 		};
+ 

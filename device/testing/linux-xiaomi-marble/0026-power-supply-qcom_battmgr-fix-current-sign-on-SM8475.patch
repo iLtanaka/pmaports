@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Sat, 3 Oct 2026 00:32:21 +0800
+Subject: [PATCH] power: supply: qcom_battmgr: fix current sign on SM8475
+ firmware
+
+The SM8475 (cape) battery firmware reports CURRENT_NOW as negative while
+charging (verified on xiaomi-marble: -800 mA on a wall charger while
+voltage, capacity and charge counter rise). The power supply ABI wants
+positive when charging, so UPower showed the battery as discharging.
+
+---
+ drivers/power/supply/qcom_battmgr.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
+index 7b35d16148..b7464deafa 100644
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -1450,6 +1450,9 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+ 			break;
+ 		case BATT_CURR_NOW:
+ 			battmgr->status.current_now = le32_to_cpu(resp->intval.value);
++			/* This firmware reports charging current as negative */
++			if (battmgr->bat_const_curr_id)
++				battmgr->status.current_now = -battmgr->status.current_now;
+ 			break;
+ 		case BATT_TEMP:
+ 			val = le32_to_cpu(resp->intval.value);

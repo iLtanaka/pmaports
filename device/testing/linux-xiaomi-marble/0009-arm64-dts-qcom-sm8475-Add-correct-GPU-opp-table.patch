@@ -1,0 +1,87 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jens Reidel <adrian@travitia.xyz>
+Date: Sun, 4 Feb 2024 05:35:03 +0100
+Subject: [PATCH] arm64: dts: qcom: sm8475: Add correct GPU opp-table
+
+Signed-off-by: Jens Reidel <adrian@travitia.xyz>
+(cherry picked from commit 021cff8924ed6eef2af25b00fbe9c580149199d6)
+---
+ arch/arm64/boot/dts/qcom/sm8475.dtsi | 60 +++++++++++++++++++++++++++-
+ 1 file changed, 59 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475.dtsi b/arch/arm64/boot/dts/qcom/sm8475.dtsi
+index 15a9b8d41e..153e5d32fc 100644
+--- a/arch/arm64/boot/dts/qcom/sm8475.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8475.dtsi
+@@ -56,6 +56,64 @@ &gcc {
+ 	compatible = "qcom,sm8475-gcc";
+ };
+ 
++&gpu {
++	gpu_opp_table: opp-table {
++		compatible = "operating-points-v2";
++		opp-900000000 {
++			opp-hz = /bits/ 64 <900000000>;
++			opp-level = <RPMH_REGULATOR_LEVEL_TURBO_L1>;
++		};
++		opp-862000000 {
++			opp-hz = /bits/ 64 <862000000>;
++			opp-level = <RPMH_REGULATOR_LEVEL_TURBO>;
++		};
++		opp-815000000 {
++			opp-hz = /bits/ 64 <815000000>;
++			opp-level = <RPMH_REGULATOR_LEVEL_NOM_L1>;
++		};
++		opp-765000000 {
++			opp-hz = /bits/ 64 <765000000>;
++			opp-level = <RPMH_REGULATOR_LEVEL_NOM>;
++		};
++		opp-710000000 {
++			opp-hz = /bits/ 64 <710000000>;
++			opp-level = <RPMH_REGULATOR_LEVEL_SVS_L2>;
++		};
++		opp-645000000 {
++			opp-hz = /bits/ 64 <645000000>;
++			opp-level = <RPMH_REGULATOR_LEVEL_SVS_L1>;
++		};
++		opp-580000000 {
++			opp-hz = /bits/ 64 <580000000>;
++			opp-level = <RPMH_REGULATOR_LEVEL_SVS_L0>;
++		};
++		opp-515000000 {
++			opp-hz = /bits/ 64 <515000000>;
++			opp-level = <RPMH_REGULATOR_LEVEL_SVS>;
++		};
++		opp-439000000 {
++			opp-hz = /bits/ 64 <439000000>;
++			opp-level = <RPMH_REGULATOR_LEVEL_LOW_SVS_L2>;
++		};
++		opp-364000000 {
++			opp-hz = /bits/ 64 <364000000>;
++			opp-level = <RPMH_REGULATOR_LEVEL_LOW_SVS_L1>;
++		};
++		opp-324000000 {
++			opp-hz = /bits/ 64 <324000000>;
++			opp-level = <RPMH_REGULATOR_LEVEL_LOW_SVS>;
++		};
++		opp-285000000 {
++			opp-hz = /bits/ 64 <285000000>;
++			opp-level = <RPMH_REGULATOR_LEVEL_LOW_SVS_D1>;
++		};
++		opp-220000000 {
++			opp-hz = /bits/ 64 <220000000>;
++			opp-level = <RPMH_REGULATOR_LEVEL_MIN_SVS>;
++		};
++	};
++};
++
+ &gpucc {
+ 	compatible = "qcom,sm8475-gpucc";
+ };
+@@ -78,4 +136,4 @@ &ufs_mem_hc {
+ 
+ &videocc {
+ 	compatible = "qcom,sm8475-videocc";
+-};
++};
+\ No newline at end of file

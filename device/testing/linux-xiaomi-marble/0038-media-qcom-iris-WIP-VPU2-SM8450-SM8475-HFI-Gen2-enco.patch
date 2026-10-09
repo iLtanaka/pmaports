@@ -1,0 +1,356 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Tue, 6 Oct 2026 09:54:44 +0800
+Subject: [PATCH] media: qcom: iris: WIP VPU2 (SM8450/SM8475) HFI Gen2 encoder
+ support
+
+vpu20_4v.mbn speaks HFI Gen2, not Gen1. Switch sm8450 to a Gen2 firmware
+data variant, add encoder BUF_DPB (required by VPU2, dropped on VPU3),
+skip WRAPPER_TZ_* writes on power-off (TZ-protected on SM8450/SM8475),
+fix encoder port->plane mapping on session stop, and log more detail on
+session info/error packets.
+
+Decoder works; encoder START is still rejected by firmware without DPB,
+and the DPB variant is suspected to hard-reset the SoC (unconfirmed).
+
+---
+ .../media/platform/qcom/iris/iris_buffer.c    |  3 +-
+ .../media/platform/qcom/iris/iris_hfi_gen2.c  | 74 +++++++++++++++++++
+ .../qcom/iris/iris_hfi_gen2_command.c         |  1 +
+ .../qcom/iris/iris_hfi_gen2_defines.h         |  1 +
+ .../qcom/iris/iris_hfi_gen2_response.c        | 24 ++++--
+ .../platform/qcom/iris/iris_platform_common.h |  2 +
+ .../platform/qcom/iris/iris_platform_sm8450.h |  2 +
+ .../platform/qcom/iris/iris_platform_vpu2.c   |  7 +-
+ .../platform/qcom/iris/iris_vpu_buffer.c      | 44 +++++++++++
+ .../platform/qcom/iris/iris_vpu_common.c      | 12 +--
+ 10 files changed, 154 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_buffer.c b/drivers/media/platform/qcom/iris/iris_buffer.c
+index 246ad0abba..888ca01449 100644
+--- a/drivers/media/platform/qcom/iris/iris_buffer.c
++++ b/drivers/media/platform/qcom/iris/iris_buffer.c
+@@ -667,7 +667,8 @@ int iris_queue_internal_buffers(struct iris_inst *inst, u32 plane)
+ 				continue;
+ 			if (buffer->attr & BUF_ATTR_QUEUED)
+ 				continue;
+-			if (buffer->type == BUF_DPB && inst->state != IRIS_INST_STREAMING) {
++			if (buffer->type == BUF_DPB && inst->domain == DECODER &&
++			    inst->state != IRIS_INST_STREAMING) {
+ 				buffer->attr |= BUF_ATTR_DEFERRED;
+ 				continue;
+ 			}
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2.c
+index acc0ed8add..57745ddc7a 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2.c
+@@ -1118,3 +1118,77 @@ const struct iris_firmware_data iris_hfi_gen2_data = {
+ 	.enc_op_int_buf_tbl = sm8550_enc_op_int_buf_tbl,
+ 	.enc_op_int_buf_tbl_size = ARRAY_SIZE(sm8550_enc_op_int_buf_tbl),
+ };
++
++static const u32 sm8450_enc_op_int_buf_tbl[] = {
++	BUF_BIN,
++	BUF_COMV,
++	BUF_NON_COMV,
++	BUF_LINE,
++	BUF_DPB,
++};
++
++const struct iris_firmware_data iris_hfi_gen2_vpu2_data = {
++	.init_hfi_ops = iris_hfi_gen2_sys_ops_init,
++
++	.core_arch = VIDEO_ARCH_LX,
++
++	.inst_fw_caps_dec = inst_fw_cap_sm8550_dec,
++	.inst_fw_caps_dec_size = ARRAY_SIZE(inst_fw_cap_sm8550_dec),
++	.inst_fw_caps_enc = inst_fw_cap_sm8550_enc,
++	.inst_fw_caps_enc_size = ARRAY_SIZE(inst_fw_cap_sm8550_enc),
++
++	.dec_input_config_params_default =
++		sm8550_vdec_input_config_params_default,
++	.dec_input_config_params_default_size =
++		ARRAY_SIZE(sm8550_vdec_input_config_params_default),
++	.dec_input_config_params_hevc =
++		sm8550_vdec_input_config_param_hevc,
++	.dec_input_config_params_hevc_size =
++		ARRAY_SIZE(sm8550_vdec_input_config_param_hevc),
++	.dec_input_config_params_vp9 =
++		sm8550_vdec_input_config_param_vp9,
++	.dec_input_config_params_vp9_size =
++		ARRAY_SIZE(sm8550_vdec_input_config_param_vp9),
++	.dec_input_config_params_av1 =
++		sm8550_vdec_input_config_param_av1,
++	.dec_input_config_params_av1_size =
++		ARRAY_SIZE(sm8550_vdec_input_config_param_av1),
++	.dec_output_config_params =
++		sm8550_vdec_output_config_params,
++	.dec_output_config_params_size =
++		ARRAY_SIZE(sm8550_vdec_output_config_params),
++
++	.enc_input_config_params =
++		sm8550_venc_input_config_params,
++	.enc_input_config_params_size =
++		ARRAY_SIZE(sm8550_venc_input_config_params),
++	.enc_output_config_params =
++		sm8550_venc_output_config_params,
++	.enc_output_config_params_size =
++		ARRAY_SIZE(sm8550_venc_output_config_params),
++
++	.dec_input_prop = sm8550_vdec_subscribe_input_properties,
++	.dec_input_prop_size = ARRAY_SIZE(sm8550_vdec_subscribe_input_properties),
++	.dec_output_prop_avc = sm8550_vdec_subscribe_output_properties_avc,
++	.dec_output_prop_avc_size =
++		ARRAY_SIZE(sm8550_vdec_subscribe_output_properties_avc),
++	.dec_output_prop_hevc = sm8550_vdec_subscribe_output_properties_hevc,
++	.dec_output_prop_hevc_size =
++		ARRAY_SIZE(sm8550_vdec_subscribe_output_properties_hevc),
++	.dec_output_prop_vp9 = sm8550_vdec_subscribe_output_properties_vp9,
++	.dec_output_prop_vp9_size =
++		ARRAY_SIZE(sm8550_vdec_subscribe_output_properties_vp9),
++	.dec_output_prop_av1 = sm8550_vdec_subscribe_output_properties_av1,
++	.dec_output_prop_av1_size =
++		ARRAY_SIZE(sm8550_vdec_subscribe_output_properties_av1),
++
++	.dec_ip_int_buf_tbl = sm8550_dec_ip_int_buf_tbl,
++	.dec_ip_int_buf_tbl_size = ARRAY_SIZE(sm8550_dec_ip_int_buf_tbl),
++	.dec_op_int_buf_tbl = sm8550_dec_op_int_buf_tbl,
++	.dec_op_int_buf_tbl_size = ARRAY_SIZE(sm8550_dec_op_int_buf_tbl),
++
++	.enc_ip_int_buf_tbl = sm8550_enc_ip_int_buf_tbl,
++	.enc_ip_int_buf_tbl_size = ARRAY_SIZE(sm8550_enc_ip_int_buf_tbl),
++	.enc_op_int_buf_tbl = sm8450_enc_op_int_buf_tbl,
++	.enc_op_int_buf_tbl_size = ARRAY_SIZE(sm8450_enc_op_int_buf_tbl),
++};
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
+index ee2730c293..e03d707ce1 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
+@@ -141,6 +141,7 @@ static u32 iris_hfi_gen2_get_port_from_buf_type(struct iris_inst *inst,
+ 		case BUF_NON_COMV:
+ 		case BUF_LINE:
+ 		case BUF_SCRATCH_2:
++		case BUF_DPB:
+ 			return HFI_PORT_BITSTREAM;
+ 		case BUF_ARP:
+ 		default:
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_defines.h b/drivers/media/platform/qcom/iris/iris_hfi_gen2_defines.h
+index 776b21cd11..125ce285e0 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_defines.h
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_defines.h
+@@ -41,6 +41,7 @@
+ #define HFI_PROP_UBWC_BANK_SPREADING		0x03000009
+ #define HFI_PROP_CODEC				0x03000100
+ #define HFI_PROP_COLOR_FORMAT			0x03000101
++#define HFI_PROP_SECURE				0x03000102
+ #define HFI_PROP_BITSTREAM_RESOLUTION		0x03000103
+ #define HFI_PROP_LINEAR_STRIDE_SCANLINE		0x03000104
+ #define HFI_PROP_CROP_OFFSETS			0x03000105
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
+index 25162ae713..b9c4782c19 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
+@@ -226,8 +226,9 @@ static int iris_hfi_gen2_handle_session_info(struct iris_inst *inst,
+ 		break;
+ 	}
+ 
+-	dev_dbg(core->dev, "session info received %#x: %s\n",
+-		pkt->type, info);
++	dev_info(core->dev, "session info received %#x: %s (pkt_id=%u, port=%u, flags=%#x, payload[0]=%#x)\n",
++		pkt->type, info, pkt->packet_id, pkt->port, pkt->flags,
++		pkt->size > sizeof(*pkt) ? pkt->payload[0] : 0);
+ 
+ 	return ret;
+ }
+@@ -265,7 +266,10 @@ static int iris_hfi_gen2_handle_session_error(struct iris_inst *inst,
+ 		break;
+ 	}
+ 
+-	dev_err(core->dev, "session error received %#x: %s\n", pkt->type, error);
++	dev_err(core->dev, "session error received %#x (payload: %#x, %#x, port: %u): %s\n",
++		pkt->type, pkt->size > sizeof(*pkt) ? pkt->payload[0] : 0,
++		pkt->size > sizeof(*pkt) + 4 ? pkt->payload[1] : 0,
++		pkt->port, error);
+ 	iris_vb2_queue_error(inst);
+ 	iris_inst_change_state(inst, IRIS_INST_ERROR);
+ 
+@@ -454,12 +458,18 @@ static int iris_hfi_gen2_handle_session_stop(struct iris_inst *inst,
+ 					     struct iris_hfi_packet *pkt)
+ {
+ 	int ret = 0;
++	u32 plane;
+ 
+-	if (pkt->port == HFI_PORT_RAW)
+-		ret = iris_inst_sub_state_change_pause(inst, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
+-	else if (pkt->port == HFI_PORT_BITSTREAM)
+-		ret = iris_inst_sub_state_change_pause(inst, V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
++	if (inst->domain == DECODER)
++		plane = (pkt->port == HFI_PORT_RAW) ?
++			V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE :
++			V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
++	else
++		plane = (pkt->port == HFI_PORT_RAW) ?
++			V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE :
++			V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+ 
++	ret = iris_inst_sub_state_change_pause(inst, plane);
+ 	complete(&inst->completion);
+ 
+ 	return ret;
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_common.h b/drivers/media/platform/qcom/iris/iris_platform_common.h
+index 0e070a0e16..bfe284597c 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_common.h
++++ b/drivers/media/platform/qcom/iris/iris_platform_common.h
+@@ -52,6 +52,7 @@ enum pipe_type {
+ 
+ extern const struct iris_firmware_data iris_hfi_gen1_data;
+ extern const struct iris_firmware_data iris_hfi_gen2_data;
++extern const struct iris_firmware_data iris_hfi_gen2_vpu2_data;
+ 
+ extern const struct iris_platform_data qcs8300_data;
+ extern const struct iris_platform_data sc7280_data;
+@@ -319,6 +320,7 @@ struct iris_platform_data {
+ 	u32 tz_cp_config_data_size;
+ 	u32 num_vpp_pipe;
+ 	bool no_aon;
++	bool no_tz_fifo_reset;
+ 	u32 max_session_count;
+ 	/* max number of macroblocks per frame supported */
+ 	u32 max_core_mbpf;
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_sm8450.h b/drivers/media/platform/qcom/iris/iris_platform_sm8450.h
+index 1c9cdbacd7..85b1014955 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_sm8450.h
++++ b/drivers/media/platform/qcom/iris/iris_platform_sm8450.h
+@@ -6,6 +6,8 @@
+ #ifndef __IRIS_PLATFORM_SM8450_H__
+ #define __IRIS_PLATFORM_SM8450_H__
+ 
++static const char * const sm8450_clk_reset_table[] = { "bus" };
++
+ static const struct platform_clk_data sm8450_clk_table[] = {
+ 	{IRIS_AXI_CLK,  "iface"        },
+ 	{IRIS_CTRL_CLK, "core"         },
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_vpu2.c b/drivers/media/platform/qcom/iris/iris_platform_vpu2.c
+index ac4bfc8908..adc7de8c9e 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_vpu2.c
++++ b/drivers/media/platform/qcom/iris/iris_platform_vpu2.c
+@@ -29,8 +29,8 @@ static const struct iris_firmware_desc iris_vpu20_p4_gen1_desc = {
+ 	.fwname = "qcom/vpu/vpu20_p4.mbn",
+ };
+ 
+-static const struct iris_firmware_desc iris_vpu20_4v_gen1_desc = {
+-	.firmware_data = &iris_hfi_gen1_data,
++static const struct iris_firmware_desc iris_vpu20_4v_gen2_desc = {
++	.firmware_data = &iris_hfi_gen2_vpu2_data,
+ 	.get_vpu_buffer_size = iris_vpu_buf_size,
+ 	.fwname = "qcom/vpu/vpu20_4v.mbn",
+ };
+@@ -132,7 +132,7 @@ const struct iris_platform_data sm8250_data = {
+ static const char * const sm8450_opp_pd_table[] = { "mxc", "mmcx" };
+ 
+ const struct iris_platform_data sm8450_data = {
+-	.firmware_desc = &iris_vpu20_4v_gen1_desc,
++	.firmware_desc = &iris_vpu20_4v_gen2_desc,
+ 	.vpu_ops = &iris_vpu2_ops,
+ 	.icc_tbl = iris_icc_info_vpu2,
+ 	.icc_tbl_size = ARRAY_SIZE(iris_icc_info_vpu2),
+@@ -154,6 +154,7 @@ const struct iris_platform_data sm8450_data = {
+ 	.inst_caps = &platform_inst_cap_vpu2,
+ 	.tz_cp_config_data = tz_cp_config_vpu2,
+ 	.tz_cp_config_data_size = ARRAY_SIZE(tz_cp_config_vpu2),
++	.no_tz_fifo_reset = true,
+ 	.num_vpp_pipe = 4,
+ 	.max_session_count = 16,
+ 	.max_core_mbpf = NUM_MBS_8K,
+diff --git a/drivers/media/platform/qcom/iris/iris_vpu_buffer.c b/drivers/media/platform/qcom/iris/iris_vpu_buffer.c
+index fb6f101641..428b23af3c 100644
+--- a/drivers/media/platform/qcom/iris/iris_vpu_buffer.c
++++ b/drivers/media/platform/qcom/iris/iris_vpu_buffer.c
+@@ -2072,6 +2072,46 @@ static int output_min_count(struct iris_inst *inst)
+ 	return output_min_count;
+ }
+ 
++static u32 iris_vpu_enc_dpb_size(struct iris_inst *inst)
++{
++	struct v4l2_pix_format_mplane *fmt = &inst->fmt_src->fmt.pix_mp;
++	u32 width = fmt->width;
++	u32 height = fmt->height;
++	bool is_ten_bit = false;
++	u32 u_buffer_width, u_buffer_height, u_chroma_buffer_height;
++	u32 ref_buf_size, metadata_stride, metadata_buf_height, meta_size_y, meta_size_c;
++
++	if (fmt->pixelformat == V4L2_PIX_FMT_P010)
++		is_ten_bit = true;
++
++	if (!is_ten_bit) {
++		u_buffer_width = ALIGN(width, 128);
++		u_buffer_height = ALIGN(height, 32);
++		u_chroma_buffer_height = ALIGN(height >> 1, 32);
++		ref_buf_size = (u_buffer_height + u_chroma_buffer_height) * u_buffer_width;
++
++		metadata_stride = ALIGN((width + 31) / 32, 64);
++		metadata_buf_height = ALIGN((height + 7) / 8, 16);
++		meta_size_y = ALIGN(metadata_stride * metadata_buf_height, 4096);
++		meta_size_c = ALIGN(metadata_stride * metadata_buf_height, 4096);
++
++		return ref_buf_size + meta_size_y + meta_size_c;
++	} else {
++		u32 ref_buf_height = ALIGN(height, 32);
++		u32 ref_luma_stride = ALIGN(((width + 191) / 192) * 192, 128);
++		u32 luma_size = ALIGN(ref_buf_height * ref_luma_stride, 4096);
++		u32 chroma_size = ALIGN(ref_luma_stride * ALIGN((height + 1) >> 1, 32), 4096);
++		ref_buf_size = luma_size + chroma_size;
++
++		metadata_stride = ALIGN((width + 31) / 32, 64);
++		metadata_buf_height = ALIGN((height + 7) / 8, 16);
++		meta_size_y = ALIGN(metadata_stride * metadata_buf_height, 4096);
++		meta_size_c = ALIGN(metadata_stride * metadata_buf_height, 4096);
++
++		return ref_buf_size + meta_size_y + meta_size_c;
++	}
++}
++
+ struct iris_vpu_buf_type_handle {
+ 	enum iris_buffer_type type;
+ 	u32 (*handle)(struct iris_inst *inst);
+@@ -2102,6 +2142,7 @@ u32 iris_vpu_buf_size(struct iris_inst *inst, enum iris_buffer_type buffer_type)
+ 		{BUF_VPSS,        iris_vpu_enc_vpss_size            },
+ 		{BUF_SCRATCH_1,   iris_vpu_enc_scratch1_size        },
+ 		{BUF_SCRATCH_2,   iris_vpu_enc_scratch2_size        },
++		{BUF_DPB,         iris_vpu_enc_dpb_size             },
+ 	};
+ 
+ 	if (inst->domain == DECODER) {
+@@ -2212,6 +2253,9 @@ static u32 internal_buffer_count(struct iris_inst *inst,
+ 
+ static inline int iris_vpu_dpb_count(struct iris_inst *inst)
+ {
++	if (inst->domain == ENCODER)
++		return 4;
++
+ 	if (inst->codec == V4L2_PIX_FMT_AV1)
+ 		return 11;
+ 
+diff --git a/drivers/media/platform/qcom/iris/iris_vpu_common.c b/drivers/media/platform/qcom/iris/iris_vpu_common.c
+index e4847c1077..5c660f9425 100644
+--- a/drivers/media/platform/qcom/iris/iris_vpu_common.c
++++ b/drivers/media/platform/qcom/iris/iris_vpu_common.c
+@@ -205,11 +205,13 @@ int iris_vpu_power_off_controller(struct iris_core *core)
+ 	if (ret)
+ 		goto disable_power;
+ 
+-	writel(CTL_AXI_CLK_HALT | CTL_CLK_HALT,
+-	       core->reg_base + WRAPPER_TZ_CTL_AXI_CLOCK_CONFIG);
+-	writel(RESET_HIGH, core->reg_base + WRAPPER_TZ_QNS4PDXFIFO_RESET);
+-	writel(0x0, core->reg_base + WRAPPER_TZ_QNS4PDXFIFO_RESET);
+-	writel(0x0, core->reg_base + WRAPPER_TZ_CTL_AXI_CLOCK_CONFIG);
++	if (!core->iris_platform_data->no_tz_fifo_reset) {
++		writel(CTL_AXI_CLK_HALT | CTL_CLK_HALT,
++		       core->reg_base + WRAPPER_TZ_CTL_AXI_CLOCK_CONFIG);
++		writel(RESET_HIGH, core->reg_base + WRAPPER_TZ_QNS4PDXFIFO_RESET);
++		writel(0x0, core->reg_base + WRAPPER_TZ_QNS4PDXFIFO_RESET);
++		writel(0x0, core->reg_base + WRAPPER_TZ_CTL_AXI_CLOCK_CONFIG);
++	}
+ 
+ disable_power:
+ 	iris_disable_unprepare_clock(core, IRIS_AHB_CLK);

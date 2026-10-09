@@ -1,0 +1,94 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Wed, 7 Oct 2026 12:08:59 +0800
+Subject: [PATCH] ASoC: codecs: aw88261: keep retrying the amplifier start
+ while playback is active
+
+The start work gives up after AW88261_START_RETRIES quick attempts (~250 ms).
+When the DSP opens its graph for the first time after boot, BCK/WS can start
+later than that; the amplifier then stays half started and the first sound
+comes out as noise. Re-queue the start work every 50 ms (up to ~1 s) while the
+stream is active and only report an error if the clock never shows up.
+
+---
+ sound/soc/codecs/aw88261.c | 23 ++++++++++++++++++++++-
+ sound/soc/codecs/aw88261.h |  4 ++++
+ 2 files changed, 26 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/codecs/aw88261.c b/sound/soc/codecs/aw88261.c
+index e03af8fa16..2c9826c471 100644
+--- a/sound/soc/codecs/aw88261.c
++++ b/sound/soc/codecs/aw88261.c
+@@ -652,7 +652,7 @@ static void aw88261_start_pa(struct aw88261 *aw88261)
+ 		}
+ 	}
+ 	if (ret != 0)
+-		dev_err(aw88261->aw_pa->dev, "start failure (%d)\n", ret);
++		dev_dbg(aw88261->aw_pa->dev, "start failure (%d)\n", ret);
+ }
+ 
+ static void aw88261_start(struct aw88261 *aw88261)
+@@ -1052,6 +1052,20 @@ static void aw88261_start_work(struct work_struct *work)
+ 
+ 	mutex_lock(&aw88261->lock);
+ 	aw88261_start(aw88261);
++	/*
++	 * A DSP that is opening its graph for the first time (e.g. right after
++	 * boot) can take several hundred ms to start BCK/WS. Keep trying while
++	 * the stream is active instead of leaving the amplifier half started.
++	 */
++	if (aw88261->playback_active &&
++	    aw88261->aw_pa->fw_status == AW88261_DEV_FW_OK &&
++	    aw88261->aw_pa->status != AW88261_DEV_PW_ON) {
++		if (++aw88261->start_attempts < AW88261_START_WORK_MAX)
++			queue_delayed_work(system_dfl_wq, &aw88261->start_work,
++					   msecs_to_jiffies(AW88261_START_WORK_RETRY_MS));
++		else
++			dev_err(aw88261->aw_pa->dev, "start failure, no I2S clock\n");
++	}
+ 	mutex_unlock(&aw88261->lock);
+ }
+ 
+@@ -1063,6 +1077,10 @@ static int aw88261_playback_event(struct snd_soc_dapm_widget *w,
+ 
+ 	switch (event) {
+ 	case SND_SOC_DAPM_PRE_PMU:
++		mutex_lock(&aw88261->lock);
++		aw88261->playback_active = true;
++		aw88261->start_attempts = 0;
++		mutex_unlock(&aw88261->lock);
+ 		/*
+ 		 * The PLL only locks once BCK/WS run. DSP backed CPU DAIs
+ 		 * (e.g. Qualcomm AudioReach) start the clocks at trigger,
+@@ -1072,6 +1090,9 @@ static int aw88261_playback_event(struct snd_soc_dapm_widget *w,
+ 				   msecs_to_jiffies(AW88261_START_WORK_DELAY_MS));
+ 		break;
+ 	case SND_SOC_DAPM_POST_PMD:
++		mutex_lock(&aw88261->lock);
++		aw88261->playback_active = false;
++		mutex_unlock(&aw88261->lock);
+ 		cancel_delayed_work_sync(&aw88261->start_work);
+ 		mutex_lock(&aw88261->lock);
+ 		aw88261_dev_stop(aw88261->aw_pa);
+diff --git a/sound/soc/codecs/aw88261.h b/sound/soc/codecs/aw88261.h
+index f84f927d21..c59196e0dc 100644
+--- a/sound/soc/codecs/aw88261.h
++++ b/sound/soc/codecs/aw88261.h
+@@ -518,6 +518,8 @@
+ 
+ #define AW88261_START_RETRIES		(5)
+ #define AW88261_START_WORK_DELAY_MS	(30)
++#define AW88261_START_WORK_RETRY_MS	(50)
++#define AW88261_START_WORK_MAX		(20)
+ 
+ /* NOTE: 192000 has a reg value donwstream but not listed in datasheet */
+ #define AW88261_RATES (SNDRV_PCM_RATE_8000_48000 | \
+@@ -587,6 +589,8 @@ struct aw88261 {
+ 	struct aw_device *aw_pa;
+ 	struct mutex lock;
+ 	struct delayed_work start_work;
++	bool playback_active;
++	unsigned int start_attempts;
+ 	struct gpio_desc *reset_gpio;
+ 	struct regmap *regmap;
+ 	struct aw_container *aw_cfg;

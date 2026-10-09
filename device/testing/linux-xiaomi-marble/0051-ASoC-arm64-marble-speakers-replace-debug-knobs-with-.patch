@@ -1,0 +1,383 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Tue, 6 Oct 2026 16:02:46 +0800
+Subject: [PATCH] ASoC/arm64: marble speakers: replace debug knobs with
+ DT-driven config
+
+- sc8280xp: TDM backend layout from DT (qcom,tdm-slots, qcom,tdm-slot-width,
+  qcom,tdm-rate, qcom,tdm-format), defaults keep 2 x 32-bit I2S at 48 kHz
+- audioreach: never send PARAM_ID_HW_EP_FRAME_SIZE_FACTOR for TDM (as stock)
+- aw88261: awinic,keep-fw-i2s-config keeps the I2S/TDM interface registers
+  from the ACF profile (AW88263S on marble: 96 kHz TDM layout) instead of
+  deriving them from hw_params, and does not clear I2SCTRL3 bit 6 there
+  (the AW88263S register map differs from AW88261: 0x13 is TEMP)
+- drop the INVERT_COUPLE_NO attribute experiment (debug override never
+  applied; the working TER_TDM_IBIT attribute is COUPLE_NO)
+- marble DTS: tdm properties, keep-fw-i2s-config on both amps
+
+Speakers now work from boot with no module parameters.
+
+---
+ .../boot/dts/qcom/sm8475-xiaomi-marble.dts    | 10 +++
+ .../sound/qcom,q6dsp-lpass-ports.h            |  1 -
+ sound/soc/codecs/aw88261.c                    | 37 +++--------
+ sound/soc/codecs/aw88261.h                    |  1 +
+ sound/soc/qcom/qdsp6/audioreach.c             | 11 +---
+ sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c     | 20 +-----
+ sound/soc/qcom/sc8280xp.c                     | 61 +++++++++----------
+ 7 files changed, 56 insertions(+), 85 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts
+index d08648a3ad..3075788b27 100644
+--- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts
++++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts
+@@ -925,6 +925,8 @@ speaker_top: audio-codec@34 {
+ 		#sound-dai-cells = <0>;
+ 		awinic,audio-channel = <0>;
+ 		awinic,sync-flag;
++		/* TDM slot layout comes from the stock ACF register profile */
++		awinic,keep-fw-i2s-config;
+ 		firmware-name = "qcom/sm8475/xiaomi/marble/aw88261_acf.bin";
+ 		sound-name-prefix = "Speaker Top";
+ 	};
+@@ -935,6 +937,8 @@ speaker_bottom: audio-codec@35 {
+ 		#sound-dai-cells = <0>;
+ 		awinic,audio-channel = <1>;
+ 		awinic,sync-flag;
++		/* TDM slot layout comes from the stock ACF register profile */
++		awinic,keep-fw-i2s-config;
+ 		firmware-name = "qcom/sm8475/xiaomi/marble/aw88261_acf.bin";
+ 		sound-name-prefix = "Speaker Bottom";
+ 	};
+@@ -1007,6 +1011,12 @@ &sound {
+ 		 <&q6prmcc LPASS_CLK_ID_TER_TDM_IBIT LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
+ 	clock-names = "tdm-vote", "tdm-bclk";
+ 
++	/* Stock speaker TDM: 96 kHz, 4 x 32-bit slots, short frame sync */
++	qcom,tdm-slots = <4>;
++	qcom,tdm-slot-width = <32>;
++	qcom,tdm-rate = <96000>;
++	qcom,tdm-format = "dsp_a";
++
+ 	speaker-dai-link {
+ 		link-name = "Speaker Playback";
+ 
+diff --git a/include/dt-bindings/sound/qcom,q6dsp-lpass-ports.h b/include/dt-bindings/sound/qcom,q6dsp-lpass-ports.h
+index ba96de31fe..45850f2d43 100644
+--- a/include/dt-bindings/sound/qcom,q6dsp-lpass-ports.h
++++ b/include/dt-bindings/sound/qcom,q6dsp-lpass-ports.h
+@@ -243,6 +243,5 @@
+ #define LPASS_CLK_ATTRIBUTE_COUPLE_NO		0x1
+ #define LPASS_CLK_ATTRIBUTE_COUPLE_DIVIDEND	0x2
+ #define LPASS_CLK_ATTRIBUTE_COUPLE_DIVISOR	0x3
+-#define LPASS_CLK_ATTRIBUTE_INVERT_COUPLE_NO	0x4
+ 
+ #endif /* __DT_BINDINGS_Q6_AUDIO_PORTS_H__ */
+diff --git a/sound/soc/codecs/aw88261.c b/sound/soc/codecs/aw88261.c
+index 705c332c48..e03af8fa16 100644
+--- a/sound/soc/codecs/aw88261.c
++++ b/sound/soc/codecs/aw88261.c
+@@ -126,34 +126,19 @@ static int aw88261_dev_check_pll(struct aw_device *aw_dev)
+ 	return -EPERM;
+ }
+ 
+-/*
+- * Debug: Xiaomi marble stock I2S/TDM interface registers, captured from the
+- * aw882xx driver during playback on Android (96 kHz TDM).
+- */
+-static bool stock_regs;
+-module_param(stock_regs, bool, 0644);
+-MODULE_PARM_DESC(stock_regs, "debug: apply captured stock marble I2S/TDM registers");
+-
+-static void aw88261_write_stock_regs(struct aw_device *aw_dev)
+-{
+-	static const u16 top[][2] = {
+-		{ 0x06, 0x94e9 }, { 0x07, 0x007d }, { 0x08, 0x2168 }, { 0x13, 0x0028 },
+-	};
+-	static const u16 bottom[][2] = {
+-		{ 0x06, 0x98e9 }, { 0x07, 0x117f }, { 0x08, 0x1168 }, { 0x13, 0x0027 },
+-	};
+-	const u16 (*tbl)[2] = aw_dev->i2c->addr == 0x34 ? top : bottom;
+-	int i;
+-
+-	for (i = 0; i < 4; i++)
+-		regmap_write(aw_dev->regmap, tbl[i][0], tbl[i][1]);
+-}
+-
+ static int aw88261_dev_configure_syspll(struct aw88261 *aw88261)
+ {
+ 	struct aw_device *aw_dev = aw88261->aw_pa;
+ 	int ret;
+ 
++	/*
++	 * Some boards (e.g. Xiaomi marble) run the amplifiers in a TDM layout
++	 * that is fully described by the vendor ACF register profile. Keep
++	 * those interface settings instead of deriving them from hw_params.
++	 */
++	if (aw88261->keep_fw_i2s)
++		return aw88261_dev_check_pll(aw_dev);
++
+ 	/* Configure TDM slots (I2S is represented as no slots) */
+ 	ret = regmap_update_bits(aw_dev->regmap, AW88261_I2SCTRL2_REG,
+ 			~AW88261_SLOT_NUM_MASK, aw88261->slot_num_value);
+@@ -216,9 +201,6 @@ static int aw88261_dev_configure_syspll(struct aw88261 *aw88261)
+ 	if (ret)
+ 		return ret;
+ 
+-	if (stock_regs)
+-		aw88261_write_stock_regs(aw_dev);
+-
+ 	return aw88261_dev_check_pll(aw_dev);
+ }
+ 
+@@ -424,7 +406,7 @@ static int aw88261_dev_reg_update(struct aw88261 *aw88261,
+ 		}
+ 
+ 		/* i2stxen */
+-		if (reg_addr == AW88261_I2SCTRL3_REG) {
++		if (reg_addr == AW88261_I2SCTRL3_REG && !aw88261->keep_fw_i2s) {
+ 			/* close tx */
+ 			reg_val &= AW88261_I2STXEN_MASK;
+ 			reg_val |= AW88261_I2STXEN_DISABLE_VALUE;
+@@ -1287,6 +1269,7 @@ static void aw88261_parse_channel_dt(struct aw88261 *aw88261)
+ 
+ 	of_property_read_u32(np, "awinic,audio-channel", &channel_value);
+ 	aw88261->phase_sync = of_property_read_bool(np, "awinic,sync-flag");
++	aw88261->keep_fw_i2s = of_property_read_bool(np, "awinic,keep-fw-i2s-config");
+ 
+ 	aw_dev->channel = channel_value;
+ }
+diff --git a/sound/soc/codecs/aw88261.h b/sound/soc/codecs/aw88261.h
+index 0aa03b0da7..f84f927d21 100644
+--- a/sound/soc/codecs/aw88261.h
++++ b/sound/soc/codecs/aw88261.h
+@@ -583,6 +583,7 @@ enum {
+ };
+ 
+ struct aw88261 {
++	bool keep_fw_i2s;
+ 	struct aw_device *aw_pa;
+ 	struct mutex lock;
+ 	struct delayed_work start_work;
+diff --git a/sound/soc/qcom/qdsp6/audioreach.c b/sound/soc/qcom/qdsp6/audioreach.c
+index e79c4bf29b..b48e34c635 100644
+--- a/sound/soc/qcom/qdsp6/audioreach.c
++++ b/sound/soc/qcom/qdsp6/audioreach.c
+@@ -2,7 +2,6 @@
+ // Copyright (c) 2020, Linaro Limited
+ 
+ #include <linux/kernel.h>
+-#include <linux/moduleparam.h>
+ #include <linux/slab.h>
+ #include <linux/soc/qcom/apr.h>
+ #include <sound/soc.h>
+@@ -13,11 +12,6 @@
+ #include "q6apm.h"
+ #include "audioreach.h"
+ 
+-/* Debug: stock AGM does not send PARAM_ID_HW_EP_FRAME_SIZE_FACTOR for TDM (0 = omit) */
+-static unsigned int tdm_fs_factor;
+-module_param(tdm_fs_factor, uint, 0644);
+-MODULE_PARM_DESC(tdm_fs_factor, "TDM HW EP frame size factor to send (0 = omit like stock)");
+-
+ /* SubGraph Config */
+ struct apm_sub_graph_data {
+ 	struct apm_sub_graph_cfg sub_graph_cfg;
+@@ -1075,7 +1069,8 @@ static int audioreach_tdm_set_media_format(struct q6apm_graph *graph,
+ 	/* For TDM modules the topology "sd line" token carries the lane mask */
+ 	int lc_sz = module->sd_line_idx ? APM_TDM_LANE_CFG_PSIZE : 0;
+ 	int ep_sz = APM_HW_EP_CFG_PSIZE;
+-	int fs_sz = tdm_fs_factor ? APM_FS_CFG_PSIZE : 0;
++	/* stock AGM never sends PARAM_ID_HW_EP_FRAME_SIZE_FACTOR for TDM */
++	int fs_sz = 0;
+ 	int size = ic_sz + lc_sz + ep_sz + fs_sz;
+ 	u16 nslots = cfg->tdm_nslots ? cfg->tdm_nslots : cfg->num_channels;
+ 	u16 slot_width = cfg->tdm_slot_width ? cfg->tdm_slot_width : cfg->bit_width;
+@@ -1167,7 +1162,7 @@ static int audioreach_tdm_set_media_format(struct q6apm_graph *graph,
+ 		param_data->error_code = 0;
+ 		param_data->param_id = PARAM_ID_HW_EP_FRAME_SIZE_FACTOR;
+ 		param_data->param_size = fs_sz - APM_MODULE_PARAM_DATA_SIZE;
+-		fs_cfg->frame_size_factor = tdm_fs_factor;
++		fs_cfg->frame_size_factor = 1;
+ 	}
+ 
+ 	return q6apm_send_cmd_sync(graph->apm, pkt, 0);
+diff --git a/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c b/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c
+index 257ec77409..03838582ae 100644
+--- a/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c
++++ b/sound/soc/qcom/qdsp6/q6dsp-lpass-clocks.c
+@@ -5,7 +5,6 @@
+ #include <linux/init.h>
+ #include <linux/clk-provider.h>
+ #include <linux/module.h>
+-#include <linux/moduleparam.h>
+ #include <linux/device.h>
+ #include <linux/platform_device.h>
+ #include <linux/of.h>
+@@ -34,25 +33,12 @@ struct q6dsp_cc {
+ 	const struct q6dsp_clk_desc *desc;
+ };
+ 
+-/* Debug: override the DT attribute of the tertiary TDM bit clock (0 = use DT) */
+-static unsigned int tdm_clk_attr;
+-module_param(tdm_clk_attr, uint, 0644);
+-MODULE_PARM_DESC(tdm_clk_attr, "override TER_TDM_IBIT clock attribute (0 = from DT)");
+-
+-static int clk_q6dsp_attr(struct q6dsp_clk *clk)
+-{
+-	if (tdm_clk_attr && clk->q6dsp_clk_id == LPASS_CLK_ID_TER_TDM_IBIT)
+-		return tdm_clk_attr;
+-
+-	return clk->attributes;
+-}
+-
+ static int clk_q6dsp_prepare(struct clk_hw *hw)
+ {
+ 	struct q6dsp_clk *clk = to_q6dsp_clk(hw);
+ 	struct q6dsp_cc *cc = dev_get_drvdata(clk->dev);
+ 
+-	return cc->desc->lpass_set_clk(clk->dev, clk->q6dsp_clk_id, clk_q6dsp_attr(clk),
++	return cc->desc->lpass_set_clk(clk->dev, clk->q6dsp_clk_id, clk->attributes,
+ 				     Q6DSP_LPASS_CLK_ROOT_DEFAULT, clk->rate);
+ }
+ 
+@@ -61,7 +47,7 @@ static void clk_q6dsp_unprepare(struct clk_hw *hw)
+ 	struct q6dsp_clk *clk = to_q6dsp_clk(hw);
+ 	struct q6dsp_cc *cc = dev_get_drvdata(clk->dev);
+ 
+-	cc->desc->lpass_set_clk(clk->dev, clk->q6dsp_clk_id, clk_q6dsp_attr(clk),
++	cc->desc->lpass_set_clk(clk->dev, clk->q6dsp_clk_id, clk->attributes,
+ 			      Q6DSP_LPASS_CLK_ROOT_DEFAULT, 0);
+ }
+ 
+@@ -127,7 +113,7 @@ static struct clk_hw *q6dsp_of_clk_hw_get(struct of_phandle_args *clkspec,
+ 	unsigned int idx = clkspec->args[0];
+ 	unsigned int attr = clkspec->args[1];
+ 
+-	if (idx >= Q6DSP_MAX_CLK_ID || attr > LPASS_CLK_ATTRIBUTE_INVERT_COUPLE_NO) {
++	if (idx >= Q6DSP_MAX_CLK_ID || attr > LPASS_CLK_ATTRIBUTE_COUPLE_DIVISOR) {
+ 		dev_err(cc->dev, "Invalid clk specifier (%d, %d)\n", idx, attr);
+ 		return ERR_PTR(-EINVAL);
+ 	}
+diff --git a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
+index 3f198504ac..9e7728613d 100644
+--- a/sound/soc/qcom/sc8280xp.c
++++ b/sound/soc/qcom/sc8280xp.c
+@@ -17,32 +17,6 @@
+ #include "sdw.h"
+ 
+ #define SC8280XP_TDM_ACTIVE_SLOTS	2
+-#define SC8280XP_TDM_SLOT_WIDTH		32
+-
+-/* Debug knobs for TDM bring-up; stock AGM: 4 slots, short sync (DSP_A) */
+-static unsigned int tdm_slots = 4;
+-module_param(tdm_slots, uint, 0644);
+-MODULE_PARM_DESC(tdm_slots, "TDM slots per frame");
+-
+-static unsigned int tdm_fmt = 1;
+-
+-static unsigned int tdm_rate = 48000;
+-module_param(tdm_rate, uint, 0644);
+-MODULE_PARM_DESC(tdm_rate, "TDM backend sample rate (stock uses 96000)");
+-module_param(tdm_fmt, uint, 0644);
+-MODULE_PARM_DESC(tdm_fmt, "TDM frame format: 0 = I2S (long sync), 1 = DSP_A, 2 = DSP_B");
+-
+-static unsigned int sc8280xp_tdm_daifmt(void)
+-{
+-	switch (tdm_fmt) {
+-	case 1:
+-		return SND_SOC_DAIFMT_DSP_A;
+-	case 2:
+-		return SND_SOC_DAIFMT_DSP_B;
+-	default:
+-		return SND_SOC_DAIFMT_I2S;
+-	}
+-}
+ 
+ struct sc8280xp_snd_data {
+ 	bool stream_prepared[AFE_PORT_MAX];
+@@ -50,6 +24,11 @@ struct sc8280xp_snd_data {
+ 	/* Optional, for boards whose TDM interface needs a HLOS clock vote */
+ 	struct clk *tdm_vote;
+ 	struct clk *tdm_bclk;
++	/* TDM backend layout, from DT (defaults: 2 x 32 bit I2S at 48 kHz) */
++	u32 tdm_slots;
++	u32 tdm_slot_width;
++	u32 tdm_rate;
++	unsigned int tdm_fmt;
+ 	struct snd_soc_jack jack;
+ 	struct snd_soc_jack dp_jack[8];
+ 	bool jack_setup;
+@@ -73,11 +52,10 @@ static int sc8280xp_snd_init(struct snd_soc_pcm_runtime *rtd)
+ 		unsigned int mask = GENMASK(SC8280XP_TDM_ACTIVE_SLOTS - 1, 0);
+ 		int i;
+ 
+-		/* I2S style framing (Philips), as expected by smart amps */
+ 		snd_soc_dai_set_fmt(cpu_dai, SND_SOC_DAIFMT_BP_FP |
+-				    sc8280xp_tdm_daifmt() | SND_SOC_DAIFMT_NB_NF);
+-		snd_soc_dai_set_tdm_slot(cpu_dai, mask, mask, tdm_slots,
+-					 SC8280XP_TDM_SLOT_WIDTH);
++				    data->tdm_fmt | SND_SOC_DAIFMT_NB_NF);
++		snd_soc_dai_set_tdm_slot(cpu_dai, mask, mask, data->tdm_slots,
++					 data->tdm_slot_width);
+ 		for_each_rtd_codec_dais(rtd, i, codec_dai)
+ 			snd_soc_dai_set_fmt(codec_dai, SND_SOC_DAIFMT_BC_FC |
+ 					    SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF);
+@@ -117,6 +95,7 @@ static int sc8280xp_snd_init(struct snd_soc_pcm_runtime *rtd)
+ static int sc8280xp_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+ 				     struct snd_pcm_hw_params *params)
+ {
++	struct sc8280xp_snd_data *data = snd_soc_card_get_drvdata(rtd->card);
+ 	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+ 	struct snd_interval *rate = hw_param_interval(params,
+ 					SNDRV_PCM_HW_PARAM_RATE);
+@@ -130,7 +109,7 @@ static int sc8280xp_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+ 	channels->max = 2;
+ 	switch (cpu_dai->id) {
+ 	case PRIMARY_TDM_RX_0...QUINARY_TDM_TX_7:
+-		rate->min = rate->max = tdm_rate;
++		rate->min = rate->max = data->tdm_rate;
+ 		fallthrough;
+ 	case PRIMARY_MI2S_RX...QUATERNARY_MI2S_TX:
+ 	case QUINARY_MI2S_RX...QUINARY_MI2S_TX:
+@@ -187,7 +166,8 @@ static int sc8280xp_snd_startup(struct snd_pcm_substream *substream)
+ 		if (ret)
+ 			return ret;
+ 
+-		ret = clk_set_rate(data->tdm_bclk, tdm_rate * tdm_slots * SC8280XP_TDM_SLOT_WIDTH);
++		ret = clk_set_rate(data->tdm_bclk,
++				   data->tdm_rate * data->tdm_slots * data->tdm_slot_width);
+ 		if (!ret)
+ 			ret = clk_prepare_enable(data->tdm_bclk);
+ 		if (ret) {
+@@ -239,6 +219,7 @@ static int sc8280xp_platform_probe(struct platform_device *pdev)
+ 	struct snd_soc_card *card;
+ 	struct sc8280xp_snd_data *data;
+ 	struct device *dev = &pdev->dev;
++	const char *tdm_fmt;
+ 	int ret;
+ 
+ 	card = devm_kzalloc(dev, sizeof(*card), GFP_KERNEL);
+@@ -258,6 +239,22 @@ static int sc8280xp_platform_probe(struct platform_device *pdev)
+ 	if (IS_ERR(data->tdm_bclk))
+ 		return dev_err_probe(dev, PTR_ERR(data->tdm_bclk), "failed to get tdm-bclk clock\n");
+ 
++	data->tdm_slots = 2;
++	data->tdm_slot_width = 32;
++	data->tdm_rate = 48000;
++	data->tdm_fmt = SND_SOC_DAIFMT_I2S;
++	of_property_read_u32(dev->of_node, "qcom,tdm-slots", &data->tdm_slots);
++	of_property_read_u32(dev->of_node, "qcom,tdm-slot-width", &data->tdm_slot_width);
++	of_property_read_u32(dev->of_node, "qcom,tdm-rate", &data->tdm_rate);
++	if (!of_property_read_string(dev->of_node, "qcom,tdm-format", &tdm_fmt)) {
++		if (!strcmp(tdm_fmt, "dsp_a"))
++			data->tdm_fmt = SND_SOC_DAIFMT_DSP_A;
++		else if (!strcmp(tdm_fmt, "dsp_b"))
++			data->tdm_fmt = SND_SOC_DAIFMT_DSP_B;
++		else if (strcmp(tdm_fmt, "i2s"))
++			return dev_err_probe(dev, -EINVAL, "invalid qcom,tdm-format\n");
++	}
++
+ 	card->dev = dev;
+ 	dev_set_drvdata(dev, card);
+ 	snd_soc_card_set_drvdata(card, data);

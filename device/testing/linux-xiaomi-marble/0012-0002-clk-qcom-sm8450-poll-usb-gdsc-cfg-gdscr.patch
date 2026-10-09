@@ -1,0 +1,21 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Fri, 2 Oct 2026 14:15:38 +0800
+Subject: [PATCH] 0002-clk-qcom-sm8450-poll-usb-gdsc-cfg-gdscr
+
+---
+ drivers/clk/qcom/gcc-sm8450.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/clk/qcom/gcc-sm8450.c b/drivers/clk/qcom/gcc-sm8450.c
+index b18bb34889..e783ff33b7 100644
+--- a/drivers/clk/qcom/gcc-sm8450.c
++++ b/drivers/clk/qcom/gcc-sm8450.c
+@@ -3142,6 +3142,7 @@ static struct gdsc usb30_prim_gdsc = {
+ 		.name = "usb30_prim_gdsc",
+ 	},
+ 	.pwrsts = PWRSTS_OFF_ON,
++	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE,
+ };
+ 
+ static struct clk_regmap *gcc_sm8450_clocks[] = {

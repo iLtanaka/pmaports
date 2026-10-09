@@ -1,0 +1,150 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Tue, 6 Oct 2026 15:38:04 +0800
+Subject: [PATCH] media: qcom: iris: VPU2 encoder WIP: stock property set, 2
+ DPB, no CB buffer flags
+
+- send the stock msm_vidc VPU2 encoder properties (PIPE, QUALITY_MODE,
+  BLUR_TYPES, CONTENT_ADAPTIVE_CODING, DEBLOCKING_MODE, ...) before START
+- 2 encoder DPB (recon) buffers like stock
+- no HFI_BUF_HOST_FLAGS_CB_NON_SECURE on VPU2 buffers (stock passes 0;
+  decoding still works)
+
+Encoding still hard-resets the SoC on the first frame. Stock allocates the
+ARP buffer from the secure non-pixel heap and maps it through the secure
+non-pixel context bank (SID 0x2184) even for non-secure sessions; mainline
+cannot program that bank, which is the likely cause.
+
+---
+ .../qcom/iris/iris_hfi_gen2_command.c         | 10 ++--
+ drivers/media/platform/qcom/iris/iris_venc.c  | 54 +++++++++++++++++++
+ .../platform/qcom/iris/iris_vpu_buffer.c      |  2 +-
+ 3 files changed, 61 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
+index 2802666b74..ec5ca2c216 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
+@@ -1291,7 +1291,7 @@ static int iris_hfi_gen2_set_num_comv(struct iris_inst *inst)
+ }
+ 
+ static void iris_hfi_gen2_get_buffer(u32 domain, struct iris_buffer *buffer,
+-				     struct iris_hfi_buffer *buf)
++				     struct iris_hfi_buffer *buf, bool cb_flag)
+ {
+ 	memset(buf, 0, sizeof(*buf));
+ 	buf->type = iris_hfi_gen2_buf_type_from_driver(domain, buffer->type);
+@@ -1306,7 +1306,9 @@ static void iris_hfi_gen2_get_buffer(u32 domain, struct iris_buffer *buffer,
+ 	buf->data_size = buffer->data_size;
+ 	if (buffer->attr & BUF_ATTR_PENDING_RELEASE)
+ 		buf->flags |= HFI_BUF_HOST_FLAG_RELEASE;
+-	buf->flags |= HFI_BUF_HOST_FLAGS_CB_NON_SECURE;
++	/* VPU2 firmware (stock msm_vidc) passes no context bank flags */
++	if (cb_flag)
++		buf->flags |= HFI_BUF_HOST_FLAGS_CB_NON_SECURE;
+ 	buf->timestamp = buffer->timestamp;
+ }
+ 
+@@ -1317,7 +1319,7 @@ static int iris_hfi_gen2_session_queue_buffer(struct iris_inst *inst, struct iri
+ 	u32 port;
+ 	int ret;
+ 
+-	iris_hfi_gen2_get_buffer(inst->domain, buffer, &hfi_buffer);
++	iris_hfi_gen2_get_buffer(inst->domain, buffer, &hfi_buffer, !inst->core->iris_platform_data->no_opb);
+ 	if (buffer->type == BUF_COMV) {
+ 		ret = iris_hfi_gen2_set_num_comv(inst);
+ 		if (ret)
+@@ -1344,7 +1346,7 @@ static int iris_hfi_gen2_session_release_buffer(struct iris_inst *inst, struct i
+ 	struct iris_hfi_buffer hfi_buffer;
+ 	u32 port;
+ 
+-	iris_hfi_gen2_get_buffer(inst->domain, buffer, &hfi_buffer);
++	iris_hfi_gen2_get_buffer(inst->domain, buffer, &hfi_buffer, !inst->core->iris_platform_data->no_opb);
+ 	hfi_buffer.flags |= HFI_BUF_HOST_FLAG_RELEASE;
+ 	port = iris_hfi_gen2_get_port_from_buf_type(inst, buffer->type);
+ 
+diff --git a/drivers/media/platform/qcom/iris/iris_venc.c b/drivers/media/platform/qcom/iris/iris_venc.c
+index a945992f63..f83c08a06c 100644
+--- a/drivers/media/platform/qcom/iris/iris_venc.c
++++ b/drivers/media/platform/qcom/iris/iris_venc.c
+@@ -490,6 +490,54 @@ int iris_venc_streamon_input(struct iris_inst *inst)
+ 	return iris_process_streamon_input(inst);
+ }
+ 
++/*
++ * Properties the stock msm_vidc driver sends for a VPU2 (SM8450/SM8475) H.264
++ * encode session that the VPU3 oriented capability tables here do not cover.
++ * Values captured from Android (c2.qti.avc.encoder, 1280x720).
++ */
++static const struct {
++	u32 id, port, type, value;
++} iris_venc_vpu2_props[] = {
++	{ 0x03000157, HFI_PORT_BITSTREAM, HFI_PAYLOAD_U32, 0 },		/* CSC */
++	{ 0x0300014b, HFI_PORT_BITSTREAM, HFI_PAYLOAD_U32, 0 },		/* ROTATION */
++	{ 0x0300017b, HFI_PORT_BITSTREAM, HFI_PAYLOAD_U32_ENUM, 0 },	/* NAL_LENGTH_FIELD */
++	{ 0x03000142, HFI_PORT_BITSTREAM, HFI_PAYLOAD_U32, 0 },		/* BASELAYER_PRIORITYID */
++	{ 0x03000151, HFI_PORT_BITSTREAM, HFI_PAYLOAD_U32, 0 },		/* AUD */
++	{ 0x03000129, HFI_PORT_BITSTREAM, HFI_PAYLOAD_32_PACKED, 0x60600 },	/* DEBLOCKING_MODE */
++	{ 0x0300010b, HFI_PORT_NONE,      HFI_PAYLOAD_U32, 4 },		/* PIPE */
++	{ 0x03000106, HFI_PORT_NONE,      HFI_PAYLOAD_U32, 0 },		/* SESSION_PRIORITY */
++	{ 0x03000134, HFI_PORT_BITSTREAM, HFI_PAYLOAD_U32, 0 },		/* LTR_COUNT */
++	{ 0x0300012b, HFI_PORT_BITSTREAM, HFI_PAYLOAD_U32, 1 },		/* TIME_DELTA_BASED_RC */
++	{ 0x03000138, HFI_PORT_BITSTREAM, HFI_PAYLOAD_U32_ENUM, 1 },	/* LAYER_ENCODING_TYPE */
++	{ 0x03000139, HFI_PORT_BITSTREAM, HFI_PAYLOAD_U32, 1 },		/* LAYER_COUNT */
++	{ 0x0300017d, HFI_PORT_BITSTREAM, HFI_PAYLOAD_U32, 0 },		/* MAINTAIN_MIN_QUALITY */
++	{ 0x0300012d, HFI_PORT_BITSTREAM, HFI_PAYLOAD_U32, 0x19 },	/* BITRATE_BOOST */
++	{ 0x0300012c, HFI_PORT_BITSTREAM, HFI_PAYLOAD_U32, 1 },		/* CONTENT_ADAPTIVE_CODING */
++	{ 0x0300014e, HFI_PORT_BITSTREAM, HFI_PAYLOAD_U32_ENUM, 2 },	/* BLUR_TYPES */
++	{ 0x03000148, HFI_PORT_BITSTREAM, HFI_PAYLOAD_U32_ENUM, 1 },	/* QUALITY_MODE */
++	{ 0x03000194, HFI_PORT_BITSTREAM, HFI_PAYLOAD_U32, 1 },		/* DISABLE_VUI_TIMING_INFO */
++};
++
++static int iris_venc_set_vpu2_props(struct iris_inst *inst)
++{
++	const struct iris_hfi_session_ops *hfi_ops = inst->hfi_session_ops;
++	u32 i, val;
++	int ret;
++
++	for (i = 0; i < ARRAY_SIZE(iris_venc_vpu2_props); i++) {
++		val = iris_venc_vpu2_props[i].value;
++		ret = hfi_ops->session_set_property(inst, iris_venc_vpu2_props[i].id,
++						   HFI_HOST_FLAGS_NONE,
++						   iris_venc_vpu2_props[i].port,
++						   iris_venc_vpu2_props[i].type,
++						   &val, sizeof(val));
++		if (ret)
++			return ret;
++	}
++
++	return 0;
++}
++
+ int iris_venc_streamon_output(struct iris_inst *inst)
+ {
+ 	int ret;
+@@ -498,6 +546,12 @@ int iris_venc_streamon_output(struct iris_inst *inst)
+ 	if (ret)
+ 		goto error;
+ 
++	if (inst->core->iris_platform_data->no_opb) {
++		ret = iris_venc_set_vpu2_props(inst);
++		if (ret)
++			goto error;
++	}
++
+ 	ret = iris_alloc_and_queue_persist_bufs(inst, BUF_ARP);
+ 	if (ret)
+ 		return ret;
+diff --git a/drivers/media/platform/qcom/iris/iris_vpu_buffer.c b/drivers/media/platform/qcom/iris/iris_vpu_buffer.c
+index 88a32ca2fb..3e0f938d6c 100644
+--- a/drivers/media/platform/qcom/iris/iris_vpu_buffer.c
++++ b/drivers/media/platform/qcom/iris/iris_vpu_buffer.c
+@@ -2260,7 +2260,7 @@ MODULE_PARM_DESC(enc_dpb, "allocate encoder DPB (reconstruction) buffers, requir
+ static inline int iris_vpu_dpb_count(struct iris_inst *inst)
+ {
+ 	if (inst->domain == ENCODER)
+-		return enc_dpb ? 4 : 0;
++		return enc_dpb ? 2 : 0;	/* stock VPU2: 2 recon buffers */
+ 
+ 	if (inst->codec == V4L2_PIX_FMT_AV1)
+ 		return 11;

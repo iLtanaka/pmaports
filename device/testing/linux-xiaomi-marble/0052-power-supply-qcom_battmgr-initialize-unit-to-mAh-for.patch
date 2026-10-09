@@ -1,0 +1,99 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Tue, 6 Oct 2026 18:29:04 +0800
+Subject: [PATCH] power: supply: qcom_battmgr: initialize unit to mAh for phone
+ SoCs; scale to uAh remoteproc: qcom: q6v5: disable handover IRQ once handled
+ to prevent SMP2P wake loop spam
+
+---
+ drivers/power/supply/qcom_battmgr.c | 24 +++++++++++++++++++-----
+ drivers/remoteproc/qcom_q6v5.c      |  6 ++++--
+ 2 files changed, 23 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
+index b7464deafa..05d84f8ebf 100644
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -576,25 +576,35 @@ static int qcom_battmgr_bat_get_property(struct power_supply *psy,
+ 	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
+ 		if (unit != QCOM_BATTMGR_UNIT_mAh)
+ 			return -ENODATA;
+-		val->intval = battmgr->info.design_capacity;
++		val->intval = battmgr->info.design_capacity < 100000 ?
++			      battmgr->info.design_capacity * 1000 :
++			      battmgr->info.design_capacity;
+ 		break;
+ 	case POWER_SUPPLY_PROP_CHARGE_FULL:
+ 		if (unit != QCOM_BATTMGR_UNIT_mAh)
+ 			return -ENODATA;
+-		val->intval = battmgr->info.last_full_capacity;
++		val->intval = battmgr->info.last_full_capacity < 100000 ?
++			      battmgr->info.last_full_capacity * 1000 :
++			      battmgr->info.last_full_capacity;
+ 		break;
+ 	case POWER_SUPPLY_PROP_CHARGE_EMPTY:
+ 		if (unit != QCOM_BATTMGR_UNIT_mAh)
+ 			return -ENODATA;
+-		val->intval = battmgr->info.capacity_low;
++		val->intval = battmgr->info.capacity_low < 100000 ?
++			      battmgr->info.capacity_low * 1000 :
++			      battmgr->info.capacity_low;
+ 		break;
+ 	case POWER_SUPPLY_PROP_CHARGE_NOW:
+ 		if (unit != QCOM_BATTMGR_UNIT_mAh)
+ 			return -ENODATA;
+-		val->intval = battmgr->status.capacity;
++		val->intval = battmgr->status.capacity < 100000 ?
++			      battmgr->status.capacity * 1000 :
++			      battmgr->status.capacity;
+ 		break;
+ 	case POWER_SUPPLY_PROP_CHARGE_COUNTER:
+-		val->intval = battmgr->info.charge_count;
++		val->intval = battmgr->info.charge_count < 100000 ?
++			      battmgr->info.charge_count * 1000 :
++			      battmgr->info.charge_count;
+ 		break;
+ 	case POWER_SUPPLY_PROP_ENERGY_FULL_DESIGN:
+ 		if (unit != QCOM_BATTMGR_UNIT_mWh)
+@@ -1677,6 +1687,10 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
+ 	else
+ 		battmgr->variant = QCOM_BATTMGR_SM8350;
+ 
++	if (battmgr->variant == QCOM_BATTMGR_SM8350 ||
++	    battmgr->variant == QCOM_BATTMGR_SM8550)
++		battmgr->unit = QCOM_BATTMGR_UNIT_mAh;
++
+ 	battmgr->bat_const_curr_id = of_device_is_compatible(dev->parent->of_node,
+ 							      "qcom,sm8475-pmic-glink");
+ 
+diff --git a/drivers/remoteproc/qcom_q6v5.c b/drivers/remoteproc/qcom_q6v5.c
+index 241478ea29..571fa95681 100644
+--- a/drivers/remoteproc/qcom_q6v5.c
++++ b/drivers/remoteproc/qcom_q6v5.c
+@@ -78,7 +78,8 @@ EXPORT_SYMBOL_GPL(qcom_q6v5_prepare);
+  */
+ int qcom_q6v5_unprepare(struct qcom_q6v5 *q6v5)
+ {
+-	disable_irq(q6v5->handover_irq);
++	if (!q6v5->handover_issued)
++		disable_irq(q6v5->handover_irq);
+ 	q6v5_load_state_toggle(q6v5, false);
+ 
+ 	/* Disable interconnect vote, in case handover never happened */
+@@ -165,7 +166,7 @@ static irqreturn_t q6v5_handover_interrupt(int irq, void *data)
+ 	struct qcom_q6v5 *q6v5 = data;
+ 
+ 	if (q6v5->handover_issued) {
+-		dev_err(q6v5->dev, "Handover signaled, but it already happened\n");
++		disable_irq_nosync(q6v5->handover_irq);
+ 		return IRQ_HANDLED;
+ 	}
+ 
+@@ -175,6 +176,7 @@ static irqreturn_t q6v5_handover_interrupt(int irq, void *data)
+ 	icc_set_bw(q6v5->path, 0, 0);
+ 
+ 	q6v5->handover_issued = true;
++	disable_irq_nosync(q6v5->handover_irq);
+ 
+ 	return IRQ_HANDLED;
+ }

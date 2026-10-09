@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Sat, 3 Oct 2026 01:46:47 +0800
+Subject: [PATCH] ASoC: codecs: aw88261: support AW88263S
+
+The AW88263S (chip id 0x2032) used on xiaomi-marble is register
+compatible with the AW88261. Accept its id and keep the real id in
+aw_dev->chip_id so the ACF profiles tagged for it are found.
+
+---
+ sound/soc/codecs/aw88261.c | 9 +++++++--
+ sound/soc/codecs/aw88261.h | 1 +
+ 2 files changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/sound/soc/codecs/aw88261.c b/sound/soc/codecs/aw88261.c
+index dbdf51188c..d41d51bdcf 100644
+--- a/sound/soc/codecs/aw88261.c
++++ b/sound/soc/codecs/aw88261.c
+@@ -1259,7 +1259,12 @@ static int aw88261_init(struct aw88261 *aw88261, struct i2c_client *i2c, struct
+ 		dev_err(&i2c->dev, "%s read chipid error. ret = %d", __func__, ret);
+ 		return ret;
+ 	}
+-	if (chip_id != AW88261_CHIP_ID) {
++	switch (chip_id) {
++	case AW88261_CHIP_ID:
++	/* Register compatible with AW88261 */
++	case AW88263S_CHIP_ID:
++		break;
++	default:
+ 		dev_err(&i2c->dev, "unsupported device id = %x", chip_id);
+ 		return -ENXIO;
+ 	}
+@@ -1274,7 +1279,7 @@ static int aw88261_init(struct aw88261 *aw88261, struct i2c_client *i2c, struct
+ 	aw_dev->i2c = i2c;
+ 	aw_dev->regmap = regmap;
+ 	aw_dev->dev = &i2c->dev;
+-	aw_dev->chip_id = AW88261_CHIP_ID;
++	aw_dev->chip_id = chip_id;
+ 	aw_dev->acf = NULL;
+ 	aw_dev->prof_info.prof_desc = NULL;
+ 	aw_dev->prof_info.count = 0;
+diff --git a/sound/soc/codecs/aw88261.h b/sound/soc/codecs/aw88261.h
+index f16f9f8c40..496db73489 100644
+--- a/sound/soc/codecs/aw88261.h
++++ b/sound/soc/codecs/aw88261.h
+@@ -553,6 +553,7 @@
+ 
+ enum aw88261_id {
+ 	AW88261_CHIP_ID = 0x2113,
++	AW88263S_CHIP_ID = 0x2032,
+ };
+ 
+ enum {

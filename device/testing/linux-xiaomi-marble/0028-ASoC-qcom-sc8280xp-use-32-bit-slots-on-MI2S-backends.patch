@@ -1,0 +1,29 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Sat, 3 Oct 2026 01:47:09 +0800
+Subject: [PATCH] ASoC: qcom: sc8280xp: use 32-bit slots on MI2S backends
+
+Speaker amps on MI2S (AW88261/AW88263S on xiaomi-marble) are set up
+for 32-bit slots with BCLK = 64 * fs.
+
+---
+ sound/soc/qcom/sc8280xp.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
+index 98b15a527e..a9974399f6 100644
+--- a/sound/soc/qcom/sc8280xp.c
++++ b/sound/soc/qcom/sc8280xp.c
+@@ -82,6 +82,12 @@ static int sc8280xp_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+ 	channels->min = 2;
+ 	channels->max = 2;
+ 	switch (cpu_dai->id) {
++	case PRIMARY_MI2S_RX...QUATERNARY_MI2S_TX:
++	case QUINARY_MI2S_RX...QUINARY_MI2S_TX:
++		/* Smart amps such as AW88261 expect 32-bit slots (BCLK = 64 * fs) */
++		snd_mask_none(fmt);
++		snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S32_LE);
++		break;
+ 	case TX_CODEC_DMA_TX_0:
+ 	case TX_CODEC_DMA_TX_1:
+ 	case TX_CODEC_DMA_TX_2:

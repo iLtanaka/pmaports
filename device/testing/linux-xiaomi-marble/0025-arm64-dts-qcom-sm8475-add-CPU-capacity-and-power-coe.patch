@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Sat, 3 Oct 2026 00:19:54 +0800
+Subject: [PATCH] arm64: dts: qcom: sm8475: add CPU capacity and power
+ coefficients
+
+sm8450.dtsi carries no capacity-dmips-mhz, so every core reports
+cpu_capacity=1024: the scheduler treats the Cortex-A510 cores as equal
+to the Cortex-X2 and EAS is disabled. Use the downstream values.
+
+---
+ arch/arm64/boot/dts/qcom/sm8475.dtsi | 14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475.dtsi b/arch/arm64/boot/dts/qcom/sm8475.dtsi
+index 153e5d32fc..8878b86eac 100644
+--- a/arch/arm64/boot/dts/qcom/sm8475.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm8475.dtsi
+@@ -8,6 +8,20 @@
+ /delete-node/ &usb_1_hsphy;
+ /delete-node/ &ufs_mem_phy;
+ 
++/*
++ * sm8450.dtsi has no CPU capacity information, so the scheduler treats the
++ * Cortex-A510 cores as equal to the Cortex-X2 and EAS stays disabled.
++ * Values taken from the downstream (stock) device tree.
++ */
++&cpu0 { capacity-dmips-mhz = <1024>; dynamic-power-coefficient = <100>; };
++&cpu1 { capacity-dmips-mhz = <1024>; dynamic-power-coefficient = <100>; };
++&cpu2 { capacity-dmips-mhz = <1024>; dynamic-power-coefficient = <100>; };
++&cpu3 { capacity-dmips-mhz = <1024>; dynamic-power-coefficient = <100>; };
++&cpu4 { capacity-dmips-mhz = <2253>; dynamic-power-coefficient = <257>; };
++&cpu5 { capacity-dmips-mhz = <2253>; dynamic-power-coefficient = <257>; };
++&cpu6 { capacity-dmips-mhz = <2253>; dynamic-power-coefficient = <257>; };
++&cpu7 { capacity-dmips-mhz = <2386>; dynamic-power-coefficient = <509>; };
++
+ &soc {
+ 	usb_1_hsphy: phy@88e3000 {
+ 		compatible = "qcom,sm8475-snps-eusb2-phy",

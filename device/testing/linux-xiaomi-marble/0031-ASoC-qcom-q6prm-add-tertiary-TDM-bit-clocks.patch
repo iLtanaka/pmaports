@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Sat, 3 Oct 2026 02:44:03 +0800
+Subject: [PATCH] ASoC: qcom: q6prm: add tertiary TDM bit clocks
+
+---
+ sound/soc/qcom/qdsp6/q6prm-clocks.c | 2 ++
+ sound/soc/qcom/qdsp6/q6prm.h        | 2 ++
+ 2 files changed, 4 insertions(+)
+
+diff --git a/sound/soc/qcom/qdsp6/q6prm-clocks.c b/sound/soc/qcom/qdsp6/q6prm-clocks.c
+index 4c574b48ab..694c99115a 100644
+--- a/sound/soc/qcom/qdsp6/q6prm-clocks.c
++++ b/sound/soc/qcom/qdsp6/q6prm-clocks.c
+@@ -25,6 +25,8 @@ static const struct q6dsp_clk_init q6prm_clks[] = {
+ 	Q6PRM_CLK(LPASS_CLK_ID_SEC_MI2S_EBIT),
+ 	Q6PRM_CLK(LPASS_CLK_ID_TER_MI2S_IBIT),
+ 	Q6PRM_CLK(LPASS_CLK_ID_TER_MI2S_EBIT),
++	Q6PRM_CLK(LPASS_CLK_ID_TER_TDM_IBIT),
++	Q6PRM_CLK(LPASS_CLK_ID_TER_TDM_EBIT),
+ 	Q6PRM_CLK(LPASS_CLK_ID_QUAD_MI2S_IBIT),
+ 	Q6PRM_CLK(LPASS_CLK_ID_QUAD_MI2S_EBIT),
+ 	Q6PRM_CLK(LPASS_CLK_ID_SPEAKER_I2S_IBIT),
+diff --git a/sound/soc/qcom/qdsp6/q6prm.h b/sound/soc/qcom/qdsp6/q6prm.h
+index a988a32086..4b023d6aaa 100644
+--- a/sound/soc/qcom/qdsp6/q6prm.h
++++ b/sound/soc/qcom/qdsp6/q6prm.h
+@@ -15,6 +15,8 @@
+ #define Q6PRM_LPASS_CLK_ID_TER_MI2S_IBIT                          0x104
+ /* Clock ID for Tertiary I2S EBIT */
+ #define Q6PRM_LPASS_CLK_ID_TER_MI2S_EBIT                          0x105
++#define Q6PRM_LPASS_CLK_ID_TER_TDM_IBIT                           0x204
++#define Q6PRM_LPASS_CLK_ID_TER_TDM_EBIT                           0x205
+ /* Clock ID for Quartnery I2S IBIT */
+ #define Q6PRM_LPASS_CLK_ID_QUAD_MI2S_IBIT                         0x106
+ /* Clock ID for Quartnery I2S EBIT */

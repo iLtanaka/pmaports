@@ -1,0 +1,21 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Fri, 2 Oct 2026 14:15:38 +0800
+Subject: [PATCH] 0003-clk-qcom-sm8450-keep-ufs-phy-gdsc-always-on
+
+---
+ drivers/clk/qcom/gcc-sm8450.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/clk/qcom/gcc-sm8450.c b/drivers/clk/qcom/gcc-sm8450.c
+index e783ff33b7..46465db411 100644
+--- a/drivers/clk/qcom/gcc-sm8450.c
++++ b/drivers/clk/qcom/gcc-sm8450.c
+@@ -3134,6 +3134,7 @@ static struct gdsc ufs_phy_gdsc = {
+ 		.name = "ufs_phy_gdsc",
+ 	},
+ 	.pwrsts = PWRSTS_OFF_ON,
++	.flags = ALWAYS_ON,
+ };
+ 
+ static struct gdsc usb30_prim_gdsc = {

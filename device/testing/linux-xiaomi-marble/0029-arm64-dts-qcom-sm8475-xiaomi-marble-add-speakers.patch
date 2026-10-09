@@ -1,0 +1,130 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Sat, 3 Oct 2026 01:49:35 +0800
+Subject: [PATCH] arm64: dts: qcom: sm8475-xiaomi-marble: add speakers
+
+Two AW88263S amps on i2c15 fed by tertiary MI2S, as in the stock
+device tree.
+
+---
+ .../boot/dts/qcom/sm8475-xiaomi-marble.dts    | 110 ++++++++++++++++++
+ 1 file changed, 110 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts
+index 2a4d08f980..0eed6284a0 100644
+--- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts
++++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts
+@@ -871,3 +871,113 @@ tx-pins {
+ &{/soc@0/tpdm@10c29000} {
+ 	status = "disabled";
+ };
++
++/*
++ * Speakers: 2x Awinic AW88263S (register compatible with AW88261) on i2c15,
++ * fed by tertiary MI2S (stock: "TDM-LPAIF-RX-TERTIARY", but the amp ACF sets
++ * plain I2S, 32-bit slots, BCLK = 64 * fs). 0x34 = top (also the earpiece,
++ * see gpio52), 0x35 = bottom. Pins and gpios from the stock device tree.
++ */
++&i2c15 {
++	clock-frequency = <400000>;
++	status = "okay";
++
++	speaker_top: audio-codec@34 {
++		compatible = "awinic,aw88261";
++		reg = <0x34>;
++		#sound-dai-cells = <0>;
++		awinic,audio-channel = <0>;
++		awinic,sync-flag;
++		firmware-name = "qcom/sm8475/xiaomi/marble/aw88261_acf.bin";
++		sound-name-prefix = "Speaker Top";
++	};
++
++	speaker_bottom: audio-codec@35 {
++		compatible = "awinic,aw88261";
++		reg = <0x35>;
++		#sound-dai-cells = <0>;
++		awinic,audio-channel = <1>;
++		awinic,sync-flag;
++		firmware-name = "qcom/sm8475/xiaomi/marble/aw88261_acf.bin";
++		sound-name-prefix = "Speaker Bottom";
++	};
++};
++
++&tlmm {
++	/* The aw88261 driver has no reset-gpios support: keep both amps out of reset */
++	speaker-top-reset-hog {
++		gpio-hog;
++		gpios = <1 GPIO_ACTIVE_HIGH>;
++		output-high;
++		line-name = "speaker-top-reset-n";
++	};
++
++	speaker-bottom-reset-hog {
++		gpio-hog;
++		gpios = <120 GPIO_ACTIVE_HIGH>;
++		output-high;
++		line-name = "speaker-bottom-reset-n";
++	};
++
++	/* Routes the top amp to the top speaker (high: earpiece) */
++	speaker-earpiece-switch-hog {
++		gpio-hog;
++		gpios = <52 GPIO_ACTIVE_HIGH>;
++		output-low;
++		line-name = "speaker-earpiece-switch";
++	};
++
++	tert_mi2s_active: tert-mi2s-active-state {
++		sck-pins {
++			pins = "gpio121";
++			function = "mi2s2_sck";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		data0-pins {
++			pins = "gpio122";
++			function = "mi2s2_data0";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		ws-pins {
++			pins = "gpio123";
++			function = "mi2s2_ws";
++			drive-strength = <8>;
++			bias-disable;
++		};
++
++		data1-pins {
++			pins = "gpio124";
++			function = "mi2s2_data1";
++			drive-strength = <8>;
++			bias-pull-down;
++		};
++	};
++};
++
++&sound {
++	compatible = "qcom,sm8450-sndcard";
++	model = "SM8475-Xiaomi-Marble";
++
++	pinctrl-0 = <&tert_mi2s_active>;
++	pinctrl-names = "default";
++
++	speaker-dai-link {
++		link-name = "Speaker Playback";
++
++		cpu {
++			sound-dai = <&q6apmbedai TERTIARY_MI2S_RX>;
++		};
++
++		codec {
++			sound-dai = <&speaker_top>, <&speaker_bottom>;
++		};
++
++		platform {
++			sound-dai = <&q6apm>;
++		};
++	};
++};

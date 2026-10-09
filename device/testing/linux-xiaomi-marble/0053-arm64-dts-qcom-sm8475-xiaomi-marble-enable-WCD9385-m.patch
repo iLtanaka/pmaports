@@ -1,0 +1,152 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Wed, 7 Oct 2026 09:38:10 +0800
+Subject: [PATCH] arm64: dts: qcom: sm8475-xiaomi-marble: enable WCD9385
+ microphones
+
+Add the WCD9385 codec (reset gpio43, 1.8 V from S10B, 2.75 V micbias from
+BOB, as on stock), the PM8350C BOB regulator, RX/TX/VA macros, both
+SoundWire masters and a WCD capture link on TX_CODEC_DMA_TX_3. The main
+(bottom) microphone is AMIC1.
+
+---
+ .../boot/dts/qcom/sm8475-xiaomi-marble.dts    | 108 ++++++++++++++++++
+ 1 file changed, 108 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts
+index 3075788b27..290695c1a3 100644
+--- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts
++++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts
+@@ -217,6 +217,35 @@ vph_pwr: vph-pwr-regulator {
+ 	};
+ };
+ 
++/ {
++	/* Stock wcd938x-codec: reset gpio43, 1.8 V from S10B, micbias 2.75 V from BOB */
++	wcd938x: audio-codec {
++		compatible = "qcom,wcd9385-codec";
++
++		pinctrl-0 = <&wcd_default>;
++		pinctrl-names = "default";
++
++		qcom,micbias1-microvolt = <2750000>;
++		qcom,micbias2-microvolt = <2750000>;
++		qcom,micbias3-microvolt = <2750000>;
++		qcom,micbias4-microvolt = <2750000>;
++		qcom,mbhc-buttons-vthreshold-microvolt = <75000 150000 237000 500000 500000 500000 500000 500000>;
++		qcom,mbhc-headset-vthreshold-microvolt = <1700000>;
++		qcom,mbhc-headphone-vthreshold-microvolt = <50000>;
++		qcom,rx-device = <&wcd_rx>;
++		qcom,tx-device = <&wcd_tx>;
++
++		reset-gpios = <&tlmm 43 GPIO_ACTIVE_LOW>;
++
++		vdd-buck-supply = <&pm8350_s10>;
++		vdd-rxtx-supply = <&pm8350_s10>;
++		vdd-io-supply = <&pm8350_s10>;
++		vdd-mic-bias-supply = <&pm8350c_bob>;
++
++		#sound-dai-cells = <1>;
++	};
++};
++
+ &apps_rsc {
+ 	regulators-0 {
+ 		compatible = "qcom,pm8350-rpmh-regulators";
+@@ -278,6 +307,14 @@ regulators-1 {
+ 		compatible = "qcom,pm8350c-rpmh-regulators";
+ 		qcom,pmic-id = "c";
+ 
++		/* WCD9385 micbias supply (stock cdc-vdd-mic-bias) */
++		pm8350c_bob: bob {
++			regulator-name = "pm8350c_bob";
++			regulator-min-microvolt = <3008000>;
++			regulator-max-microvolt = <3960000>;
++			regulator-initial-mode = <RPMH_REGULATOR_MODE_AUTO>;
++		};
++
+ 		/* QCA6490 vddrfa1p9 / vddpcie1p9 (stock vdd-wlan-rfa1) */
+ 		pm8350c_s1: smps1 {
+ 			regulator-name = "pm8350c_s1";
+@@ -1017,6 +1054,32 @@ &sound {
+ 	qcom,tdm-rate = <96000>;
+ 	qcom,tdm-format = "dsp_a";
+ 
++	/* Analog mics on the WCD9385; ADCs feed the TX macro over SoundWire */
++	audio-routing = "AMIC1", "MIC BIAS1",
++			"AMIC2", "MIC BIAS2",
++			"AMIC3", "MIC BIAS3",
++			"AMIC4", "MIC BIAS3",
++			"TX SWR_INPUT0", "ADC1_OUTPUT",
++			"TX SWR_INPUT1", "ADC2_OUTPUT",
++			"TX SWR_INPUT0", "ADC3_OUTPUT",
++			"TX SWR_INPUT1", "ADC4_OUTPUT";
++
++	wcd-capture-dai-link {
++		link-name = "WCD Capture";
++
++		cpu {
++			sound-dai = <&q6apmbedai TX_CODEC_DMA_TX_3>;
++		};
++
++		codec {
++			sound-dai = <&wcd938x 1>, <&swr2 0>, <&txmacro 0>;
++		};
++
++		platform {
++			sound-dai = <&q6apm>;
++		};
++	};
++
+ 	speaker-dai-link {
+ 		link-name = "Speaker Playback";
+ 
+@@ -1033,3 +1096,48 @@ platform {
+ 		};
+ 	};
+ };
++
++&rxmacro {
++	status = "okay";
++};
++
++&txmacro {
++	status = "okay";
++};
++
++/* No DMICs on marble; VA macro only provides the fsgen clock to RX/TX macros */
++&vamacro {
++	vdd-micb-supply = <&pm8350_s10>;
++
++	status = "okay";
++};
++
++&swr1 {
++	status = "okay";
++
++	wcd_rx: codec@0,4 {
++		compatible = "sdw20217010d00";
++		reg = <0 4>;
++		qcom,rx-port-mapping = <1 2 3 4 5>;
++	};
++};
++
++&swr2 {
++	status = "okay";
++
++	wcd_tx: codec@0,3 {
++		compatible = "sdw20217010d00";
++		reg = <0 3>;
++		qcom,tx-port-mapping = <1 1 2 3>;
++	};
++};
++
++&tlmm {
++	wcd_default: wcd-reset-n-active-state {
++		pins = "gpio43";
++		function = "gpio";
++		drive-strength = <16>;
++		bias-disable;
++		output-low;
++	};
++};

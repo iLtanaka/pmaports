@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Fri, 2 Oct 2026 14:19:16 +0800
+Subject: [PATCH] drm/msm/dpu: use 1:1:1 DSC topology (marble)
+
+Replaces the sm8450-mainline 'Hack in 1:1:1 DSC topology' commit for
+the reworked dpu_encoder_update_topology() in v7.x.
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
+index 32514694fa..47f2260d3a 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c
+@@ -662,9 +662,7 @@ void dpu_encoder_update_topology(struct drm_encoder *drm_enc,
+ 				 const struct drm_display_mode *adj_mode)
+ {
+ 	struct dpu_encoder_virt *dpu_enc = to_dpu_encoder_virt(drm_enc);
+-	struct msm_drm_private *priv = dpu_enc->base.dev->dev_private;
+ 	struct msm_display_info *disp_info = &dpu_enc->disp_info;
+-	struct dpu_kms *dpu_kms = to_dpu_kms(priv->kms);
+ 	struct drm_connector *connector;
+ 	struct drm_connector_state *conn_state;
+ 	struct drm_framebuffer *fb;
+@@ -689,10 +687,12 @@ void dpu_encoder_update_topology(struct drm_encoder *drm_enc,
+ 		 */
+ 		WARN(topology->num_intf > 2,
+ 		     "DSC topology cannot support more than 2 interfaces\n");
+-		if (topology->num_intf >= 2 || dpu_kms->catalog->dsc_count >= 2)
+-			topology->num_dsc = 2;
+-		else
+-			topology->num_dsc = 1;
++		/*
++		 * marble: use one DSC per interface (1:1:1). The panel takes
++		 * two 540px slices per line from a single encoder, which is
++		 * what the stock driver does and what this port is tuned for.
++		 */
++		topology->num_dsc = topology->num_intf;
+ 	}
+ 
+ 	connector = drm_atomic_get_new_connector_for_encoder(state, drm_enc);

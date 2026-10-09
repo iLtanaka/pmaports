@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Sat, 3 Oct 2026 02:44:04 +0800
+Subject: [PATCH] arm64: dts: qcom: sm8475-xiaomi-marble: drive speakers over
+ tertiary TDM
+
+Like stock, use the tertiary TDM interface and vote the LPASS HW and
+TER_TDM_IBIT clocks (stock: qcom,mi2s-tdm-is-hw-vote-needed).
+
+---
+ arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts | 14 ++++++++++----
+ 1 file changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts
+index 0eed6284a0..f0c2526f9b 100644
+--- a/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts
++++ b/arch/arm64/boot/dts/qcom/sm8475-xiaomi-marble.dts
+@@ -874,9 +874,10 @@ tx-pins {
+ 
+ /*
+  * Speakers: 2x Awinic AW88263S (register compatible with AW88261) on i2c15,
+- * fed by tertiary MI2S (stock: "TDM-LPAIF-RX-TERTIARY", but the amp ACF sets
+- * plain I2S, 32-bit slots, BCLK = 64 * fs). 0x34 = top (also the earpiece,
+- * see gpio52), 0x35 = bottom. Pins and gpios from the stock device tree.
++ * fed by the tertiary TDM interface like stock ("TDM-LPAIF-RX-TERTIARY"),
++ * framed as I2S (2 x 32-bit slots, BCLK = 64 * fs) as set by the amp ACF.
++ * 0x34 = top (also the earpiece, see gpio52), 0x35 = bottom. Pins and gpios
++ * from the stock device tree.
+  */
+ &i2c15 {
+ 	clock-frequency = <400000>;
+@@ -965,11 +966,16 @@ &sound {
+ 	pinctrl-0 = <&tert_mi2s_active>;
+ 	pinctrl-names = "default";
+ 
++	/* Stock: qcom,mi2s-tdm-is-hw-vote-needed for the tertiary interface */
++	clocks = <&q6prmcc LPASS_HW_MACRO_VOTE LPASS_CLK_ATTRIBUTE_COUPLE_NO>,
++		 <&q6prmcc LPASS_CLK_ID_TER_TDM_IBIT LPASS_CLK_ATTRIBUTE_COUPLE_NO>;
++	clock-names = "tdm-vote", "tdm-bclk";
++
+ 	speaker-dai-link {
+ 		link-name = "Speaker Playback";
+ 
+ 		cpu {
+-			sound-dai = <&q6apmbedai TERTIARY_MI2S_RX>;
++			sound-dai = <&q6apmbedai TERTIARY_TDM_RX_0>;
+ 		};
+ 
+ 		codec {

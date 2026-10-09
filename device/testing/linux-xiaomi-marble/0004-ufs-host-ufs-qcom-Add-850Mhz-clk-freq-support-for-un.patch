@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Danila Tikhonov <danila@jiaxyga.com>
+Date: Thu, 1 Feb 2024 20:42:22 +0300
+Subject: [PATCH] ufs: host: ufs-qcom: Add 850Mhz clk freq support for unipro
+ core
+
+Signed-off-by: Danila Tikhonov <danila@jiaxyga.com>
+(cherry picked from commit 1a75d0490aa7d9db5632c15c73b749ab153e9336)
+---
+ drivers/ufs/host/ufs-qcom.c | 3 +++
+ drivers/ufs/host/ufs-qcom.h | 1 +
+ 2 files changed, 4 insertions(+)
+
+diff --git a/drivers/ufs/host/ufs-qcom.c b/drivers/ufs/host/ufs-qcom.c
+index 291c434487..4871123ba2 100644
+--- a/drivers/ufs/host/ufs-qcom.c
++++ b/drivers/ufs/host/ufs-qcom.c
+@@ -1749,6 +1749,9 @@ static int ufs_qcom_set_clk_40ns_cycles(struct ufs_hba *hba,
+ 	 * generic formulae.
+ 	 */
+ 	switch (cycles_in_1us) {
++	case UNIPRO_CORE_CLK_FREQ_850_MHZ:
++		cycles_in_40ns = 34;
++		break;
+ 	case UNIPRO_CORE_CLK_FREQ_403_MHZ:
+ 		cycles_in_40ns = 16;
+ 		break;
+diff --git a/drivers/ufs/host/ufs-qcom.h b/drivers/ufs/host/ufs-qcom.h
+index e20b3ca505..3e35af8711 100644
+--- a/drivers/ufs/host/ufs-qcom.h
++++ b/drivers/ufs/host/ufs-qcom.h
+@@ -221,6 +221,7 @@ enum {
+ #define UNIPRO_CORE_CLK_FREQ_300_MHZ           300
+ #define UNIPRO_CORE_CLK_FREQ_201_5_MHZ         202
+ #define UNIPRO_CORE_CLK_FREQ_403_MHZ           403
++#define UNIPRO_CORE_CLK_FREQ_850_MHZ           850
+ 
+ /* TX_HSG1_SYNC_LENGTH attr value */
+ #define PA_TX_HSG1_SYNC_LENGTH_VAL	0x4A

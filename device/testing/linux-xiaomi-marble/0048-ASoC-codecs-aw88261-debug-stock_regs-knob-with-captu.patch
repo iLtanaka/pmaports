@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Tue, 6 Oct 2026 15:04:27 +0800
+Subject: [PATCH] ASoC: codecs: aw88261: debug stock_regs knob with captured
+ marble TDM registers
+
+On Xiaomi marble the AW88263S amps only lock and play when their
+I2SCTRL1/2/3 and I2SCFG1 registers match what the stock aw882xx driver
+programs (96 kHz TDM, 4 slots). Add a stock_regs module parameter that
+writes the captured per-amp values before the PLL check.
+
+---
+ sound/soc/codecs/aw88261.c | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/sound/soc/codecs/aw88261.c b/sound/soc/codecs/aw88261.c
+index ff0545ec8c..705c332c48 100644
+--- a/sound/soc/codecs/aw88261.c
++++ b/sound/soc/codecs/aw88261.c
+@@ -126,6 +126,29 @@ static int aw88261_dev_check_pll(struct aw_device *aw_dev)
+ 	return -EPERM;
+ }
+ 
++/*
++ * Debug: Xiaomi marble stock I2S/TDM interface registers, captured from the
++ * aw882xx driver during playback on Android (96 kHz TDM).
++ */
++static bool stock_regs;
++module_param(stock_regs, bool, 0644);
++MODULE_PARM_DESC(stock_regs, "debug: apply captured stock marble I2S/TDM registers");
++
++static void aw88261_write_stock_regs(struct aw_device *aw_dev)
++{
++	static const u16 top[][2] = {
++		{ 0x06, 0x94e9 }, { 0x07, 0x007d }, { 0x08, 0x2168 }, { 0x13, 0x0028 },
++	};
++	static const u16 bottom[][2] = {
++		{ 0x06, 0x98e9 }, { 0x07, 0x117f }, { 0x08, 0x1168 }, { 0x13, 0x0027 },
++	};
++	const u16 (*tbl)[2] = aw_dev->i2c->addr == 0x34 ? top : bottom;
++	int i;
++
++	for (i = 0; i < 4; i++)
++		regmap_write(aw_dev->regmap, tbl[i][0], tbl[i][1]);
++}
++
+ static int aw88261_dev_configure_syspll(struct aw88261 *aw88261)
+ {
+ 	struct aw_device *aw_dev = aw88261->aw_pa;
+@@ -193,6 +216,9 @@ static int aw88261_dev_configure_syspll(struct aw88261 *aw88261)
+ 	if (ret)
+ 		return ret;
+ 
++	if (stock_regs)
++		aw88261_write_stock_regs(aw_dev);
++
+ 	return aw88261_dev_check_pll(aw_dev);
+ }
+ 

@@ -1,0 +1,109 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Tue, 6 Oct 2026 11:53:47 +0800
+Subject: [PATCH] ASoC: qcom: marble TDM debug knobs: tdm_rate, tdm_fs_factor
+
+tdm_rate (snd-soc-sc8280xp) sets the TDM backend rate and bit clock;
+tdm_fs_factor (snd-q6apm) omits PARAM_ID_HW_EP_FRAME_SIZE_FACTOR by
+default, as stock AGM never sends it for TDM.
+
+---
+ sound/soc/qcom/qdsp6/audioreach.c | 26 +++++++++++++++++---------
+ sound/soc/qcom/sc8280xp.c         | 10 ++++++++--
+ 2 files changed, 25 insertions(+), 11 deletions(-)
+
+diff --git a/sound/soc/qcom/qdsp6/audioreach.c b/sound/soc/qcom/qdsp6/audioreach.c
+index c3d0d27164..e79c4bf29b 100644
+--- a/sound/soc/qcom/qdsp6/audioreach.c
++++ b/sound/soc/qcom/qdsp6/audioreach.c
+@@ -2,6 +2,7 @@
+ // Copyright (c) 2020, Linaro Limited
+ 
+ #include <linux/kernel.h>
++#include <linux/moduleparam.h>
+ #include <linux/slab.h>
+ #include <linux/soc/qcom/apr.h>
+ #include <sound/soc.h>
+@@ -12,6 +13,11 @@
+ #include "q6apm.h"
+ #include "audioreach.h"
+ 
++/* Debug: stock AGM does not send PARAM_ID_HW_EP_FRAME_SIZE_FACTOR for TDM (0 = omit) */
++static unsigned int tdm_fs_factor;
++module_param(tdm_fs_factor, uint, 0644);
++MODULE_PARM_DESC(tdm_fs_factor, "TDM HW EP frame size factor to send (0 = omit like stock)");
++
+ /* SubGraph Config */
+ struct apm_sub_graph_data {
+ 	struct apm_sub_graph_cfg sub_graph_cfg;
+@@ -1069,7 +1075,7 @@ static int audioreach_tdm_set_media_format(struct q6apm_graph *graph,
+ 	/* For TDM modules the topology "sd line" token carries the lane mask */
+ 	int lc_sz = module->sd_line_idx ? APM_TDM_LANE_CFG_PSIZE : 0;
+ 	int ep_sz = APM_HW_EP_CFG_PSIZE;
+-	int fs_sz = APM_FS_CFG_PSIZE;
++	int fs_sz = tdm_fs_factor ? APM_FS_CFG_PSIZE : 0;
+ 	int size = ic_sz + lc_sz + ep_sz + fs_sz;
+ 	u16 nslots = cfg->tdm_nslots ? cfg->tdm_nslots : cfg->num_channels;
+ 	u16 slot_width = cfg->tdm_slot_width ? cfg->tdm_slot_width : cfg->bit_width;
+@@ -1153,14 +1159,16 @@ static int audioreach_tdm_set_media_format(struct q6apm_graph *graph,
+ 	hw_cfg->mf.num_channels = cfg->num_channels;
+ 	hw_cfg->mf.data_format = module->data_format;
+ 
+-	p += ep_sz;
+-	fs_cfg = p;
+-	param_data = &fs_cfg->param_data;
+-	param_data->module_instance_id = module->instance_id;
+-	param_data->error_code = 0;
+-	param_data->param_id = PARAM_ID_HW_EP_FRAME_SIZE_FACTOR;
+-	param_data->param_size = fs_sz - APM_MODULE_PARAM_DATA_SIZE;
+-	fs_cfg->frame_size_factor = 1;
++	if (fs_sz) {
++		p += ep_sz;
++		fs_cfg = p;
++		param_data = &fs_cfg->param_data;
++		param_data->module_instance_id = module->instance_id;
++		param_data->error_code = 0;
++		param_data->param_id = PARAM_ID_HW_EP_FRAME_SIZE_FACTOR;
++		param_data->param_size = fs_sz - APM_MODULE_PARAM_DATA_SIZE;
++		fs_cfg->frame_size_factor = tdm_fs_factor;
++	}
+ 
+ 	return q6apm_send_cmd_sync(graph->apm, pkt, 0);
+ }
+diff --git a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
+index 6a72bd6885..3f198504ac 100644
+--- a/sound/soc/qcom/sc8280xp.c
++++ b/sound/soc/qcom/sc8280xp.c
+@@ -25,6 +25,10 @@ module_param(tdm_slots, uint, 0644);
+ MODULE_PARM_DESC(tdm_slots, "TDM slots per frame");
+ 
+ static unsigned int tdm_fmt = 1;
++
++static unsigned int tdm_rate = 48000;
++module_param(tdm_rate, uint, 0644);
++MODULE_PARM_DESC(tdm_rate, "TDM backend sample rate (stock uses 96000)");
+ module_param(tdm_fmt, uint, 0644);
+ MODULE_PARM_DESC(tdm_fmt, "TDM frame format: 0 = I2S (long sync), 1 = DSP_A, 2 = DSP_B");
+ 
+@@ -125,9 +129,11 @@ static int sc8280xp_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+ 	channels->min = 2;
+ 	channels->max = 2;
+ 	switch (cpu_dai->id) {
++	case PRIMARY_TDM_RX_0...QUINARY_TDM_TX_7:
++		rate->min = rate->max = tdm_rate;
++		fallthrough;
+ 	case PRIMARY_MI2S_RX...QUATERNARY_MI2S_TX:
+ 	case QUINARY_MI2S_RX...QUINARY_MI2S_TX:
+-	case PRIMARY_TDM_RX_0...QUINARY_TDM_TX_7:
+ 		/* Smart amps such as AW88261 expect 32-bit slots (BCLK = 64 * fs) */
+ 		snd_mask_none(fmt);
+ 		snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S32_LE);
+@@ -181,7 +187,7 @@ static int sc8280xp_snd_startup(struct snd_pcm_substream *substream)
+ 		if (ret)
+ 			return ret;
+ 
+-		ret = clk_set_rate(data->tdm_bclk, 48000 * tdm_slots * SC8280XP_TDM_SLOT_WIDTH);
++		ret = clk_set_rate(data->tdm_bclk, tdm_rate * tdm_slots * SC8280XP_TDM_SLOT_WIDTH);
+ 		if (!ret)
+ 			ret = clk_prepare_enable(data->tdm_bclk);
+ 		if (ret) {

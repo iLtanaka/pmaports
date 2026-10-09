@@ -1,0 +1,67 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>
+Date: Fri, 2 Oct 2026 14:15:40 +0800
+Subject: [PATCH] 0012-power-supply-qcom-battmgr-sm8475-shifted-bat-prop-ids
+
+---
+ drivers/power/supply/qcom_battmgr.c | 19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+
+diff --git a/drivers/power/supply/qcom_battmgr.c b/drivers/power/supply/qcom_battmgr.c
+index 91cf39b008..7b35d16148 100644
+--- a/drivers/power/supply/qcom_battmgr.c
++++ b/drivers/power/supply/qcom_battmgr.c
+@@ -9,6 +9,7 @@
+ #include <linux/module.h>
+ #include <linux/mutex.h>
+ #include <linux/nvmem-consumer.h>
++#include <linux/of.h>
+ #include <linux/of_device.h>
+ #include <linux/power_supply.h>
+ #include <linux/property.h>
+@@ -313,6 +314,11 @@ struct qcom_battmgr {
+ 	struct pmic_glink_client *client;
+ 
+ 	enum qcom_battmgr_variant variant;
++	/*
++	 * Firmware (e.g. SM8475 / cape) with BATT_CONSTANT_CURRENT inserted at
++	 * id 12, shifting BATT_TEMP and all later battery property ids by one.
++	 */
++	bool bat_const_curr_id;
+ 
+ 	struct power_supply *ac_psy;
+ 	struct power_supply *bat_psy;
+@@ -462,6 +468,8 @@ static int qcom_battmgr_bat_sm8350_update(struct qcom_battmgr *battmgr,
+ 		return -EINVAL;
+ 
+ 	prop = sm8350_bat_prop_map[psp];
++	if (battmgr->bat_const_curr_id && prop >= BATT_TEMP)
++		prop++;
+ 
+ 	mutex_lock(&battmgr->lock);
+ 	ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_GET, prop, 0);
+@@ -1382,6 +1390,14 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
+ 	switch (opcode) {
+ 	case BATTMGR_BAT_PROPERTY_GET:
+ 		property = le32_to_cpu(resp->intval.property);
++		if (battmgr->bat_const_curr_id && property >= BATT_TEMP) {
++			if (property == BATT_TEMP) {
++				/* BATT_CONSTANT_CURRENT, never requested */
++				battmgr->error = -ENODATA;
++				goto out_complete;
++			}
++			property--;
++		}
+ 		if (property == BATT_MODEL_NAME) {
+ 			if (payload_len != sizeof(resp->strval)) {
+ 				dev_warn(battmgr->dev,
+@@ -1658,6 +1674,9 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
+ 	else
+ 		battmgr->variant = QCOM_BATTMGR_SM8350;
+ 
++	battmgr->bat_const_curr_id = of_device_is_compatible(dev->parent->of_node,
++							      "qcom,sm8475-pmic-glink");
++
+ 	ret = qcom_battmgr_charge_control_thresholds_init(battmgr);
+ 	if (ret < 0)
+ 		return dev_err_probe(dev, ret,
