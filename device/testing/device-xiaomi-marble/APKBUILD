@@ -1,0 +1,153 @@
+# Reference: <https://postmarketos.org/devicepkg>
+maintainer="Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>"
+pkgname=device-xiaomi-marble
+pkgdesc="Xiaomi POCO F5 / Redmi Note 12 Turbo"
+pkgver=1
+pkgrel=41
+url="https://postmarketos.org"
+license="MIT"
+arch="aarch64"
+options="!check !archcheck"
+depends="
+	alsa-ucm-conf
+	hexagonrpcd
+	linux-xiaomi-marble
+	postmarketos-base
+	rmtfs
+	soc-qcom
+"
+makedepends="devicepkg-dev gcc musl-dev linux-headers"
+subpackages="$pkgname-nonfree-firmware:nonfree_firmware"
+source="
+	50-marble-display-on.sh
+	81-libssc-xiaomi-marble.rules
+	alsa-ucm-conf/HiFi.conf
+	alsa-ucm-conf/marble.conf
+	deviceinfo
+	environment-marble.conf
+	hexagonrpcd-sdsp-marble.conf
+	iio-sensor-proxy-marble.conf
+	plasma-mobile-marble.conf
+	modules-load.conf
+	modules-initfs
+	marble-hardware-tuning.sh
+	marble-hardware-tuning.service
+	60-marble-storage.rules
+	61-marble-gpu.rules
+	99-marble-vm.conf
+	marble-kwin-boost.sh
+	marble-touchboost.c
+	marble-touchboost.service
+	plasma-kwin_wayland-marble.conf
+"
+
+build() {
+	devicepkg_build $startdir $pkgname
+	${CC:-gcc} $CFLAGS -Wall -Wextra $LDFLAGS -o marble-touchboost "$srcdir"/marble-touchboost.c
+}
+
+package() {
+	devicepkg_package $startdir $pkgname
+	install -Dm755 "$srcdir"/50-marble-display-on.sh \
+		"$pkgdir"/usr/share/mkinitfs/hooks/50-marble-display-on.sh
+	install -Dm644 "$srcdir"/HiFi.conf \
+		"$pkgdir"/usr/share/alsa/ucm2/Qualcomm/sm8450/xiaomi-marble/HiFi.conf
+	install -Dm644 "$srcdir"/marble.conf \
+		"$pkgdir"/usr/share/alsa/ucm2/conf.d/sm8450/SM8475-Xiaomi-Marble.conf
+	install -Dm644 "$srcdir"/81-libssc-xiaomi-marble.rules \
+		"$pkgdir"/usr/lib/udev/rules.d/81-libssc-xiaomi-marble.rules
+	install -Dm644 "$srcdir"/hexagonrpcd-sdsp-marble.conf \
+		"$pkgdir"/usr/lib/systemd/system/hexagonrpcd-sdsp.service.d/50-marble.conf
+	install -Dm644 "$srcdir"/iio-sensor-proxy-marble.conf \
+		"$pkgdir"/usr/lib/systemd/system/iio-sensor-proxy.service.d/50-marble.conf
+	install -Dm644 "$srcdir"/plasma-mobile-marble.conf \
+		"$pkgdir"/usr/lib/systemd/system/plasma-mobile.service.d/50-marble-sensors.conf
+	install -Dm644 "$srcdir"/environment-marble.conf \
+		"$pkgdir"/usr/lib/environment.d/90-xiaomi-marble.conf
+	install -Dm755 "$srcdir"/marble-hardware-tuning.sh \
+		"$pkgdir"/usr/libexec/marble-hardware-tuning.sh
+	install -Dm644 "$srcdir"/marble-hardware-tuning.service \
+		"$pkgdir"/usr/lib/systemd/system/marble-hardware-tuning.service
+	install -d "$pkgdir"/usr/lib/systemd/system/multi-user.target.wants
+	ln -s ../marble-hardware-tuning.service \
+		"$pkgdir"/usr/lib/systemd/system/multi-user.target.wants/marble-hardware-tuning.service
+	install -Dm644 "$srcdir"/60-marble-storage.rules \
+		"$pkgdir"/usr/lib/udev/rules.d/60-marble-storage.rules
+	install -Dm644 "$srcdir"/61-marble-gpu.rules \
+		"$pkgdir"/usr/lib/udev/rules.d/61-marble-gpu.rules
+	install -Dm755 "$srcdir"/marble-kwin-boost.sh \
+		"$pkgdir"/usr/libexec/marble-kwin-boost.sh
+	install -Dm644 "$srcdir"/plasma-kwin_wayland-marble.conf \
+		"$pkgdir"/usr/lib/systemd/user/plasma-kwin_wayland.service.d/50-marble-boost.conf
+	install -Dm755 marble-touchboost \
+		"$pkgdir"/usr/libexec/marble-touchboost
+	install -Dm644 "$srcdir"/marble-touchboost.service \
+		"$pkgdir"/usr/lib/systemd/system/marble-touchboost.service
+	ln -s ../marble-touchboost.service \
+		"$pkgdir"/usr/lib/systemd/system/multi-user.target.wants/marble-touchboost.service
+	install -Dm644 "$srcdir"/99-marble-vm.conf \
+		"$pkgdir"/usr/lib/sysctl.d/99-marble-vm.conf
+}
+
+nonfree_firmware() {
+	pkgdesc="Firmware for GPU, modem, Wi-Fi, Bluetooth, audio, sensors and video"
+	depends="
+		firmware-xiaomi-marble-adreno
+		firmware-xiaomi-marble-adsp
+		firmware-xiaomi-marble-audio
+		firmware-xiaomi-marble-bluetooth
+		firmware-xiaomi-marble-hexagonfs
+		firmware-xiaomi-marble-modem
+		firmware-xiaomi-marble-slpi
+		firmware-xiaomi-marble-venus
+		firmware-xiaomi-marble-wlan
+		"
+	mkdir "$subpkgdir"
+}
+
+# pkgrel 31: Add marble-hardware-tuning, UFS scheduler none, and VM dirty limits.
+# pkgrel 32: marble-hardware-tuning only sets IRQ affinities (UFS/CPU/GPU frequency
+# floors dropped: idle battery cost, no measurable gain); enable it by default.
+# pkgrel 33: deviceinfo_flash_kernel_on_update=false (no slot suffix in /proc/cmdline;
+# boot_b/vendor_boot_b are flashed with fastboot from the PC).
+# pkgrel 34: UI responsiveness: GPU devfreq floor 324 MHz (udev) and a uclamp.min
+# frequency floor for KWin (user unit drop-in) instead of a global performance governor.
+# GPU runtime autosuspend delay 66 -> 500 ms (wake-up after short idle stalled frames 45-90 ms).
+# pkgrel 35: marble-touchboost: raise CPU floors while touching (UI trailed the finger at idle clocks;
+# SM8450 mainline DT has no CPU->L3/DDR bandwidth scaling yet).
+# pkgrel 36: release cleanup: boot-deploy generates extlinux.conf for U-Boot; ship UCM,
+# libssc mount matrix, haptics/display module loading and the GTK redraw workaround;
+# add the nonfree-firmware subpackage; drop the initramfs debug-shell and autolog hook
+# and the super partition lookup (rootfs is a normal partition).
+# pkgrel 37: initramfs hook cycles the display off/on so the FDE unlock screen (unl0kr)
+# is visible; the panel stays dark after the first enable at boot.
+# pkgrel 38: depend on rmtfs (the modem does not boot without it); start hexagonrpcd-sdsp
+# when the SLPI node appears and restart iio-sensor-proxy after it; UCM routes the capture
+# front end in the verb so PulseAudio can probe the microphone.
+# pkgrel 39: replace the hexagonrpcd udev/restart hack (ExecStartPost ran as the fastrpc
+# user and looped) with unit ordering: hexagonrpcd waits for the SLPI node, iio-sensor-proxy
+# starts after it. pkgrel 40: hexagonrpcd needs ~10 s before the sensors are served.
+# pkgrel 41: start the Plasma Mobile session only once iio-sensor-proxy reports the sensors
+# (KWin/powerdevil check once at startup; auto-rotate and auto-brightness never saw them).
+sha512sums="
+85c0c82603ec6dde952a53b5fe667a57121f23a1ceb76cf525c667ae53e25e72eea5c1f9e8839083ed8253ffc20fd45df5c4a326c25c6119ff9bd13e5666de75  50-marble-display-on.sh
+1d0d837ee8060a356a3888dc9beb8f4b7eb824b90a971c9fd93b94e8925353dc303c671c3daba3f03985e94acd29dd69035f86060730dd8bf26374f937340c74  81-libssc-xiaomi-marble.rules
+618735f4e49cf71ea324e3e2e694248564277375d3e08caa1455b2357e7666076c607b6fc9b8fd1b54c70301d78f0f908c7c48009d316786d6da77565e5926c5  HiFi.conf
+4204d8e5b7c36f39a909f4dda8bb546f38b7d79cc1e612337d5ea0e115b565600400d397005cd6796839bb0498f8c0d201af11db6a52189032295f86ecd0a68a  marble.conf
+a891ab1244224e59c41091246d9d4aac6dea4af414348d2a94ace7a9d8cd74498ccbcb3111d6bb61be39899563ad1f95188096f48fe4758e69029657310bb30f  deviceinfo
+0e1293a65d2d9f899d1ebb989efcc0b076a3148c96f08951e6a72f47bc6c61ec5c3759748aae91203e0f0d3f5cd3be53372883665000c0b15cfa27e11801ce9e  environment-marble.conf
+105877df8e5cc7cf8dd35c24e062bf7b0b3303152a02a7dd4643b432bf15992ae121999f979f197f854984bb596e0f3b4c516b2ef1cf503e3dbe3c90a9a08cc2  hexagonrpcd-sdsp-marble.conf
+af66960939e6a9be4f9e39cc4e81ff6889adc0754f68ba038085dd888be46aec106f9556255794886ef469668e5bb027f63e84513746addf46a47f759024257d  iio-sensor-proxy-marble.conf
+2a5d480ec8d9448ac79e63dbbbf8221b58450e6f72018364b0b5098140d916996f516896883c1a0992c1a09a7d155aa42cb1886cfea4b81f28ecb38510936e8c  plasma-mobile-marble.conf
+ca4324ba638db429a0347a8d9b0eb64b2f9496c9860d7e1a333d01a56ae57e131d4115a7002965b96474e8b47c5c574b3e52f328967234fad3851e448aa8c905  modules-load.conf
+2155a7e8dd0f87a6ff326bd6964687925a903ba6715f06fc8f746098e44e4e71bc1319077e941486adf557165c98d4e777eb318d2b9f2114864904c2237b19af  modules-initfs
+61d07be89bb39465bad93df66e1ed49080bf5da5bfe1362c4427225beaa766270c737e55106253e475b824fa71b105910af6756b84d34b5484cc24b0ac4f7987  marble-hardware-tuning.sh
+6596f3563e641770df62de8c81104e8e1e1230cb5cb135cd21ba08210dda9f20ba68c6f6155dad69f0c9e43b98446640ef8ce0f8f5c269d5cd10a44b33111de1  marble-hardware-tuning.service
+1198d1995f97ca99ae582f9bd9d66a14185436772b70e4d4a2c4e9884400681d88afddc0bf49e38d8a8eed53cb8af0850ac5f3c74bfb8905905ab7ca8e466e43  60-marble-storage.rules
+07e878d0bc30db51476cb6538927ba024f3d13ac5392faf0bd0604bf302c8b0c0039b903fdf1b7c4435b9069a590de68f0178ae3a93d2b9ba7b6907b909d8237  61-marble-gpu.rules
+7fb33e35c212527d42c1201527914f72e19b4c073928e1c81772a08e1050394cd45281d7ad4dfe1b5d74604b0cc01d3639d888431e69582bbb0f39050b26624c  99-marble-vm.conf
+94b124b9de3da398dd54a6ca9aba534861cd799cd405c79a23e89ee059554e29d62b9ee68b1ecc9677df403449c43461ad75826b5df072cd7ef39a8002607c51  marble-kwin-boost.sh
+7904b5521d896fc99268595bd531f92a6f28725b2e4399be45c4cb58a7afa1f8ea9dcd34c578ed0fb7f4196f87eb850a2ca5b853f0e37373c74a278d450c316e  marble-touchboost.c
+01841249918be3378fd11b35f03bd965dc78e0f20477f4d35d57f032927e9011ed772591a1baafe2d63b3d338d8ab64eab78e583b70e4eaff6be201685dba7b4  marble-touchboost.service
+31ef612cd32db8cf2e60788472cb222e3bb0f54fcfab2f11c97c93f64a605d7996b113c3a73df8c23f79f87dad24b9b41a7e7e0f7334421477aa952dcf2f38be  plasma-kwin_wayland-marble.conf
+"

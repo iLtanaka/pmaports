@@ -1,0 +1,49 @@
+# Reference: <https://postmarketos.org/deviceinfo>
+# Please use double quotes only. You can source this file in shell
+# scripts.
+
+deviceinfo_format_version="0"
+deviceinfo_name="Xiaomi POCO F5 / Redmi Note 12 Turbo"
+deviceinfo_manufacturer="Xiaomi"
+deviceinfo_codename="xiaomi-marble"
+deviceinfo_year="2023"
+deviceinfo_arch="aarch64"
+
+# Device related
+deviceinfo_chassis="handset"
+deviceinfo_external_storage="false"
+deviceinfo_screen_width="1080"
+deviceinfo_screen_height="2400"
+
+# Kernel options
+deviceinfo_dtb="qcom/sm8475-xiaomi-marble"
+deviceinfo_append_dtb="false"
+# The stock ABL chainloads U-Boot from boot_b; U-Boot boots
+# /boot/extlinux/extlinux.conf. Kernel updates only rewrite /boot.
+deviceinfo_flash_kernel_on_update="false"
+deviceinfo_generate_extlinux_config="true"
+
+# Bootloader related
+# clk/pd/regulator_ignore_unused: some consumers (camera, unused PHYs) are
+# not described yet; the bootloader-enabled resources must stay on.
+deviceinfo_flash_method="fastboot"
+deviceinfo_kernel_cmdline="pmos.nosplash console=tty0 console=ttyMSM0,115200n8 earlycon loglevel=1 vt.global_cursor_default=0 printk.devkmsg=on pstore.compress=none log_buf_len=2M msm_geni_serial.con_enabled=0 clk_ignore_unused pd_ignore_unused regulator_ignore_unused fw_devlink=permissive pcie_aspm=off"
+deviceinfo_generate_bootimg="false"
+deviceinfo_usb_network_function="rndis.usb0"
+deviceinfo_flash_sparse="true"
+deviceinfo_flash_pagesize="4096"
+deviceinfo_flash_offset_base="0x00000000"
+deviceinfo_flash_offset_dtb="0x01f00000"
+deviceinfo_flash_offset_kernel="0x00008000"
+deviceinfo_flash_offset_ramdisk="0x01000000"
+deviceinfo_flash_offset_second="0x00000000"
+deviceinfo_flash_offset_tags="0x00000100"
+deviceinfo_flash_fastboot_partition_boot="boot"
+deviceinfo_flash_fastboot_partition_dtbo="dtbo"
+deviceinfo_flash_fastboot_partition_rootfs="super"
+deviceinfo_flash_fastboot_partition_vbmeta="vbmeta"
+deviceinfo_bootimg_qcdt="false"
+deviceinfo_header_version="4"
+
+# Required for devices using UFS as storage.
+deviceinfo_rootfs_image_sector_size="4096"
