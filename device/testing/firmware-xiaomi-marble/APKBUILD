@@ -1,0 +1,110 @@
+# Reference: <https://postmarketos.org/devicepkg>
+maintainer="Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>"
+pkgname=firmware-xiaomi-marble
+pkgver=20261008
+pkgrel=0
+pkgdesc="Firmware for Xiaomi POCO F5 / Redmi Note 12 Turbo"
+url="https://github.com/iLtanaka/firmware-xiaomi-marble"
+arch="aarch64"
+license="proprietary"
+options="!check !strip !archcheck !tracedeps pmb:cross-native"
+subpackages="
+	$pkgname-adreno
+	$pkgname-adsp
+	$pkgname-audio
+	$pkgname-bluetooth
+	$pkgname-hexagonfs
+	$pkgname-modem
+	$pkgname-slpi
+	$pkgname-venus
+	$pkgname-wlan
+	"
+source="https://github.com/iLtanaka/firmware-xiaomi-marble/archive/v$pkgver/$pkgname-$pkgver.tar.gz"
+builddir="$srcdir/$pkgname-$pkgver"
+
+_fwdir="/lib/firmware/qcom/sm8475/xiaomi/marble"
+
+package() {
+	# parent package is empty
+	mkdir -p "$pkgdir"
+}
+
+# Xiaomi marble boots with secure boot, it can only load signed firmware.
+adreno() {
+	pkgdesc="Xiaomi marble Adreno 725 firmware"
+
+	install -Dm644 "$builddir"/marble/a730_zap.mbn -t "$subpkgdir$_fwdir"
+	install -Dm644 "$builddir"/generic/qcom/a730_sqe.fw \
+		"$builddir"/generic/qcom/gmu_gen70000.bin -t "$subpkgdir"/lib/firmware/qcom
+}
+
+adsp() {
+	pkgdesc="Xiaomi marble ADSP firmware (audio, battery and charger)"
+
+	install -Dm644 "$builddir"/marble/adsp2.* \
+		"$builddir"/marble/adspr.jsn \
+		"$builddir"/marble/adspua.jsn \
+		"$builddir"/marble/battmgr.jsn \
+		"$builddir"/marble/cdspr.jsn -t "$subpkgdir$_fwdir"
+}
+
+audio() {
+	pkgdesc="Xiaomi marble audio topology and speaker amplifier tuning"
+
+	install -Dm644 "$builddir"/marble/aw88261_acf.bin -t "$subpkgdir$_fwdir"
+	install -Dm644 "$builddir"/generic/SM8475-Xiaomi-Marble-tplg.bin \
+		-t "$subpkgdir"/lib/firmware/qcom/sm8450
+}
+
+bluetooth() {
+	pkgdesc="Xiaomi marble WCN6855 Bluetooth firmware"
+
+	local f
+	install -Dm644 "$builddir"/generic/qca/hp* -t "$subpkgdir"/lib/firmware/qca
+	# btqca requests the wcn-prefixed names on WCN6855
+	for f in "$subpkgdir"/lib/firmware/qca/hp*; do
+		f="${f##*/}"
+		ln -s "$f" "$subpkgdir/lib/firmware/qca/wcn$f"
+	done
+}
+
+hexagonfs() {
+	pkgdesc="Xiaomi marble sensor registry and calibration for hexagonrpcd"
+
+	mkdir -p "$subpkgdir"/usr/share
+	cp -a "$builddir"/hexagonfs "$subpkgdir"/usr/share/qcom
+}
+
+modem() {
+	pkgdesc="Xiaomi marble modem and IPA firmware"
+
+	install -Dm644 "$builddir"/marble/modem.* \
+		"$builddir"/marble/modemr.jsn \
+		"$builddir"/marble/ipa_fws.* -t "$subpkgdir$_fwdir"
+	cp -a "$builddir"/marble/modem_pr "$subpkgdir$_fwdir"/
+}
+
+slpi() {
+	pkgdesc="Xiaomi marble SLPI (sensor DSP) firmware"
+
+	install -Dm644 "$builddir"/marble/slpi2.* \
+		"$builddir"/marble/slpir.jsn \
+		"$builddir"/marble/slpius.jsn -t "$subpkgdir$_fwdir"
+}
+
+venus() {
+	pkgdesc="Xiaomi marble Iris (VPU) video firmware"
+
+	install -Dm644 "$builddir"/generic/qcom/vpu/* -t "$subpkgdir"/lib/firmware/qcom/vpu
+}
+
+wlan() {
+	pkgdesc="Xiaomi marble WCN6855 Wi-Fi firmware and board file"
+
+	mkdir -p "$subpkgdir"/lib/firmware/ath11k
+	cp -a "$builddir"/generic/ath11k/WCN6855 "$subpkgdir"/lib/firmware/ath11k/
+}
+
+sha512sums="
+8953ba8cc68e4b6a21570dba651cb60f10d063211da036b6e66f63002b065b0c809e7b1db35ca4979a571c141db2c1c4a13fdd5d6bd2b8261b5dde3020809f61  firmware-xiaomi-marble-20261008.tar.gz
+"
