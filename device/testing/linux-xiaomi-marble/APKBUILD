@@ -5,7 +5,7 @@ maintainer="Tatsuki Tanaka <tatsuki@tanakatatsuki.dev>"
 _flavor="xiaomi-marble"
 pkgname=linux-$_flavor
 pkgver=7.2.8
-pkgrel=7
+pkgrel=8
 pkgdesc="Close-to-mainline kernel for Xiaomi Poco F5 / Redmi Note 12 Turbo"
 arch="aarch64"
 _carch="arm64"
@@ -144,7 +144,7 @@ aaafd6cb56e09a11c125853417d47b5ede14aa3bc91ca5283d44cd48ca3d397262aa24e76e4bfcb2
 08bebdd2be2e3ca6da3f441e218a8ba4dbf100fe0cb7e13e2fffb0631419b18ecc7f4b52f49187f4b07866f2990575470147e69c5186b76fe77af3f146e6cdf7  0008-arm64-dts-qcom-Add-SM8475-device-tree.patch
 0fb77c9cc9bb3ea5c732feef34787eaee4b7d1528440c76bea4827250b5801ecbde81a72582e8683185a2401277387b9289cb8a0d663c271bdec50957c17464e  0009-arm64-dts-qcom-sm8475-Add-correct-GPU-opp-table.patch
 76304924939454eeaad1f58efadf0fa289487f2bffa47800e64310c451ebc07835f70dbbd167ed619e9c61f905b87838785b8f2869d526cfc30f229bc1fd7225  0010-soc-qcom-pd_mapper-Add-SM8475-compatible.patch
-2c4689476caff8703039a4b38eb5fc19c8a221c59c18474a3b77dec140a2cbde251183ba9024b359cf5734267fd225b5478f80d2820ce589e2387e879c16840f  0011-0001-arm64-dts-qcom-add-xiaomi-marble-placeholder.patch
+7e2632c9659e8e80ac63cc4ab927dd61eab03f34de71d96b7f268fc96c40bac58548572dd3f683087484161f3ebaa591df8368097d912aab47c0f2bb0f97fe4d  0011-0001-arm64-dts-qcom-add-xiaomi-marble-placeholder.patch
 ab091d23f6d0b0dc6f35478830b2b3fc66af828fec045e7c0fdc34b8a0b5392d6246c8733f2cab6add29dc06189e00332dc90a9942c14b54a09820a770347e55  0012-0002-clk-qcom-sm8450-poll-usb-gdsc-cfg-gdscr.patch
 03492df00f8b0bbf4187ce5ba0a1d4e74a94c79451dd80fcae259c14e7dafcdf6269e191272b25dd781f69d7990be1d0475f04885ae03643015686bcfe78c0cc  0013-0003-clk-qcom-sm8450-keep-ufs-phy-gdsc-always-on.patch
 10ad21b62e085ecec14d9a439374e12430aa2b1b7eb0978e1fc64b93785dacab07b3c2e59e38a70a64e0192552f59e74da415898b526710ae063e1823cdecdf6  0014-0005-drm-panel-add-xiaomi-marble-m16t-36-02-0a.patch
