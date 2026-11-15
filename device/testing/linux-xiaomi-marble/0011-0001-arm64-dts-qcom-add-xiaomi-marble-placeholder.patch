@@ -590,7 +590,7 @@ index 0000000000..2a4d08f980
 +		reg = <0>;
 +
 +		interrupt-parent = <&tlmm>;
-+		interrupts = <21 IRQ_TYPE_LEVEL_LOW>;
++		interrupts = <21 IRQ_TYPE_EDGE_FALLING>;
 +		reset-gpios = <&tlmm 20 GPIO_ACTIVE_LOW>;
 +
 +		avdd-supply = <&pm8350c_l9>;
